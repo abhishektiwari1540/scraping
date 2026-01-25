@@ -1,6 +1,5 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { createProxyMiddleware } from 'http-proxy-middleware';
 import { JobScrapedData } from './types';
 
 // Interface for LinkedIn job listing
@@ -16,6 +15,9 @@ export interface LinkedInJobListing {
   salary?: string;
   applicants?: string;
   is_easy_apply?: boolean;
+  data_entity_urn?: string;
+  data_reference_id?: string;
+  data_tracking_id?: string;
 }
 
 // Interface for detailed job data
@@ -36,9 +38,17 @@ export interface LinkedInJobDetail {
   company_about?: string;
   company_url?: string;
   job_id: string;
+  data_entity_urn?: string;
+  work_from?: string;
+  hr_name?: string;
+  hr_linkedin?: string;
+  review?: string;
+  company_rating?: number;
+  visa_sponsorship?: boolean;
+  relocation_assistance?: boolean;
 }
 
-// List of realistic user agents to rotate
+// User agents
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -52,7 +62,7 @@ function getRandomUserAgent(): string {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
-// Enhanced headers to mimic real browser
+// Get headers
 function getHeaders(referer?: string) {
   const headers: any = {
     'User-Agent': getRandomUserAgent(),
@@ -79,12 +89,12 @@ function getHeaders(referer?: string) {
   return headers;
 }
 
-// Delay function to avoid rate limiting
+// Delay function
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Extract job ID from various URL formats
+// Extract job ID from URL
 function extractJobIdFromUrl(url: string): string {
   const patterns = [
     /jobPosting:(\d+)/,
@@ -100,145 +110,70 @@ function extractJobIdFromUrl(url: string): string {
     }
   }
 
-  // Fallback: extract last part of URL
   const parts = url.split('/').filter(Boolean);
-  return parts[parts.length - 1].split('?')[0] || 'unknown';
+  return parts[parts.length - 1].split('?')[0] || Date.now().toString();
 }
 
-// Scrape LinkedIn job search page
+// Scrape LinkedIn search page for 50+ jobs
 export async function scrapeLinkedInSearch(url: string): Promise<LinkedInJobListing[]> {
   try {
     console.log(`🔍 Scraping LinkedIn search: ${url}`);
     
-    // Add delay before request
     await delay(2000 + Math.random() * 3000);
     
     const response = await axios.get(url, {
       headers: getHeaders(),
       timeout: 30000,
-      validateStatus: (status) => status === 200,
+      validateStatus: (status) => status < 500,
     });
 
     const $ = cheerio.load(response.data);
     const jobListings: LinkedInJobListing[] = [];
 
-    // Try multiple selectors for job cards
-    const selectors = [
-      '.jobs-search__results-list .base-card',
-      '.job-search-card',
-      '[data-entity-urn^="urn:li:jobPosting"]',
-      '.job-card-container',
-      'li[class*="job-card"]',
-    ];
-
-    for (const selector of selectors) {
-      const elements = $(selector);
-      if (elements.length > 0) {
-        console.log(`✅ Found ${elements.length} jobs with selector: ${selector}`);
-        
-        elements.each((_, element) => {
-          const jobCard = $(element);
-          extractJobListing(jobCard, jobListings);
-        });
-        
-        break;
-      }
-    }
-
-    if (jobListings.length === 0) {
-      // Fallback: Look for any job-like elements
-      $('a[href*="/jobs/view/"]').each((_, element) => {
-        const link = $(element);
-        const href = link.attr('href');
-        if (href && href.includes('/jobs/view/')) {
-          const jobListing: LinkedInJobListing = {
-            job_url: href.startsWith('http') ? href : `https://www.linkedin.com${href}`,
-            job_title: link.text().trim() || 'Unknown Position',
-            company_name: 'Unknown',
-            company_logo: '',
-            location: '',
-            posted_date: '',
-            job_id: extractJobIdFromUrl(href),
-            is_remote: false,
-            applicants: '',
-            is_easy_apply: false,
-          };
-          jobListings.push(jobListing);
+    // Look for job cards in the results list
+    const jobCards = $('.jobs-search__results-list li, .jobs-search-results-list li, [data-entity-urn^="urn:li:jobPosting"]');
+    
+    if (jobCards.length === 0) {
+      // Alternative: look for base-card class
+      $('.base-card').each((_, element) => {
+        const jobCard = $(element);
+        if (jobCard.find('a[href*="/jobs/view/"]').length > 0) {
+          extractJobListingFromCard(jobCard, jobListings);
         }
+      });
+    } else {
+      jobCards.each((_, element) => {
+        const jobCard = $(element);
+        extractJobListingFromCard(jobCard, jobListings);
       });
     }
 
     console.log(`✅ Found ${jobListings.length} job listings`);
     
-    // Limit to first 5 for testing
-    return jobListings.slice(0, 5);
+    // Return all jobs found (not limited to 5)
+    return jobListings;
 
   } catch (error: any) {
     console.error('Error scraping LinkedIn search:', error.message);
-    
-    if (error.response?.status === 999) {
-      console.log('⚠️ LinkedIn detected scraping. Trying alternative approach...');
-      // Return mock data for testing
-      return getMockJobListings();
-    }
-    
     throw new Error(`Failed to scrape LinkedIn search: ${error.message}`);
   }
 }
 
-// Get mock job listings for testing
-function getMockJobListings(): LinkedInJobListing[] {
-  return [
-    {
-      job_url: 'https://www.linkedin.com/jobs/view/1234567890',
-      job_title: 'Senior Software Engineer',
-      company_name: 'Tech Company Inc',
-      company_logo: 'https://example.com/logo.png',
-      location: 'Jaipur, Rajasthan, India',
-      posted_date: '1 week ago',
-      job_id: '1234567890',
-      is_remote: false,
-      applicants: '50+ applicants',
-      is_easy_apply: true,
-    },
-    {
-      job_url: 'https://www.linkedin.com/jobs/view/2345678901',
-      job_title: 'Frontend Developer',
-      company_name: 'Digital Solutions',
-      company_logo: 'https://example.com/logo2.png',
-      location: 'Remote',
-      posted_date: '2 days ago',
-      job_id: '2345678901',
-      is_remote: true,
-      applicants: '100+ applicants',
-      is_easy_apply: false,
-    },
-  ];
-}
-
-// Extract individual job listing from a job card
-function extractJobListing(jobCard: cheerio.Cheerio, jobListings: LinkedInJobListing[]): void {
+// Extract job listing from a job card
+function extractJobListingFromCard(jobCard: cheerio.Cheerio, jobListings: LinkedInJobListing[]): void {
   try {
-    // Extract job URL - try multiple selectors
-    let jobUrl = '';
-    const linkSelectors = [
-      'a.base-card__full-link',
-      'a.job-search-card__link',
-      'a[href*="/jobs/view/"]',
-      'a[data-tracking-control-name*="public_jobs"]',
-    ];
+    // Get data attributes
+    const dataEntityUrn = jobCard.attr('data-entity-urn') || '';
+    const dataReferenceId = jobCard.attr('data-reference-id') || '';
+    const dataTrackingId = jobCard.attr('data-tracking-id') || '';
 
-    for (const selector of linkSelectors) {
-      const link = jobCard.find(selector);
-      if (link.length > 0) {
-        jobUrl = link.attr('href') || '';
-        if (jobUrl) break;
-      }
-    }
-
+    // Extract job URL from anchor tag
+    const jobLink = jobCard.find('a[href*="/jobs/view/"], a.base-card__full-link');
+    let jobUrl = jobLink.attr('href') || '';
+    
     if (!jobUrl) return;
 
-    // Clean and normalize URL
+    // Normalize URL
     if (!jobUrl.startsWith('http')) {
       jobUrl = `https://www.linkedin.com${jobUrl}`;
     }
@@ -246,110 +181,101 @@ function extractJobListing(jobCard: cheerio.Cheerio, jobListings: LinkedInJobLis
     // Extract job ID
     const jobId = extractJobIdFromUrl(jobUrl);
 
-    // Extract job title
+    // Extract job title from multiple possible locations
     let jobTitle = '';
-    const titleSelectors = [
-      '.base-search-card__title',
-      '.job-search-card__title',
-      'h3',
-      '.job-card-list__title',
-      '[data-test="job-card-title"]',
+    const titleSources = [
+      jobCard.find('.sr-only').text().trim(),
+      jobCard.find('h3').text().trim(),
+      jobCard.find('.base-search-card__title').text().trim(),
+      jobCard.find('.job-search-card__title').text().trim(),
+      jobCard.find('span[aria-hidden="true"]').text().trim(),
     ];
-
-    for (const selector of titleSelectors) {
-      const title = jobCard.find(selector);
-      if (title.length > 0) {
-        jobTitle = title.text().trim();
-        if (jobTitle) break;
+    
+    for (const title of titleSources) {
+      if (title && title.length > 3) {
+        jobTitle = title;
+        break;
       }
     }
 
     // Extract company name
     let companyName = '';
-    const companySelectors = [
-      '.base-search-card__subtitle',
-      '.job-search-card__company',
-      'h4',
-      '.job-card-container__company-name',
+    const companySources = [
+      jobCard.find('.base-search-card__subtitle').text().trim(),
+      jobCard.find('.job-search-card__company').text().trim(),
+      jobCard.find('h4 a').text().trim(),
+      jobCard.find('[data-tracking-control-name*="public_jobs_topcard-org-name"]').text().trim(),
     ];
-
-    for (const selector of companySelectors) {
-      const company = jobCard.find(selector);
-      if (company.length > 0) {
-        companyName = company.text().trim();
-        if (companyName) break;
+    
+    for (const company of companySources) {
+      if (company && company.length > 1) {
+        companyName = company;
+        break;
       }
     }
 
     // Extract company logo
     let companyLogo = '';
-    const img = jobCard.find('img');
-    if (img.length > 0) {
-      companyLogo = img.attr('src') || img.attr('data-delayed-url') || img.attr('data-ghost-url') || '';
+    const logoImg = jobCard.find('.search-entity-media img, img.artdeco-entity-image');
+    if (logoImg.length > 0) {
+      companyLogo = logoImg.attr('src') || 
+                    logoImg.attr('data-delayed-url') || 
+                    logoImg.attr('data-ghost-url') || '';
     }
 
     // Extract location
     let location = '';
-    const locationSelectors = [
-      '.job-search-card__location',
-      '.base-search-card__metadata',
-      '.job-card-container__metadata-item',
-      '[data-test="job-card-location"]',
+    const locationSources = [
+      jobCard.find('.job-search-card__location').text().trim(),
+      jobCard.find('.base-search-card__metadata').text().trim(),
+      jobCard.find('.job-card-container__metadata-item').text().trim(),
+      jobCard.find('[data-test="job-card-location"]').text().trim(),
     ];
-
-    for (const selector of locationSelectors) {
-      const loc = jobCard.find(selector);
-      if (loc.length > 0) {
-        location = loc.text().trim();
-        if (location) break;
+    
+    for (const loc of locationSources) {
+      if (loc && loc.length > 3) {
+        location = loc;
+        break;
       }
     }
 
     // Extract posted date
     let postedDate = '';
-    const dateSelectors = [
-      'time',
-      '.job-search-card__listdate',
-      '.job-card-container__listed-date',
+    const dateSources = [
+      jobCard.find('time').text().trim(),
+      jobCard.find('.job-search-card__listdate').text().trim(),
+      jobCard.find('.job-card-container__listed-date').text().trim(),
+      jobCard.find('.posted-time-ago__text').text().trim(),
     ];
-
-    for (const selector of dateSelectors) {
-      const date = jobCard.find(selector);
-      if (date.length > 0) {
-        postedDate = date.text().trim();
-        if (postedDate) break;
+    
+    for (const date of dateSources) {
+      if (date && date.length > 3) {
+        postedDate = date;
+        break;
       }
     }
 
     // Extract applicant count
     let applicants = '';
-    const applicantSelectors = [
-      '.num-applicants__caption',
-      '.job-card-container__applicant-count',
-    ];
-
-    for (const selector of applicantSelectors) {
-      const applicant = jobCard.find(selector);
-      if (applicant.length > 0) {
-        applicants = applicant.text().trim();
-        if (applicants) break;
-      }
+    const applicantCount = jobCard.find('.num-applicants__caption').text().trim();
+    if (applicantCount) {
+      applicants = applicantCount;
     }
 
     // Check if remote
-    const isRemote = location.toLowerCase().includes('remote') || 
-                    jobTitle.toLowerCase().includes('remote') ||
-                    location.toLowerCase().includes('hybrid');
+    const locationText = location.toLowerCase() + ' ' + (jobTitle || '').toLowerCase();
+    const isRemote = locationText.includes('remote') || 
+                    locationText.includes('hybrid') ||
+                    locationText.includes('work from home');
 
     // Check if easy apply
     const isEasyApply = jobCard.find('.job-search-card__easy-apply').length > 0 ||
-                       jobCard.text().toLowerCase().includes('easy apply') ||
-                       jobCard.find('[aria-label*="Easy Apply"]').length > 0;
+                       jobCard.text().toLowerCase().includes('easy apply');
 
     const jobListing: LinkedInJobListing = {
       job_url: jobUrl,
-      job_title: jobTitle || 'Unknown Position',
-      company_name: companyName || 'Unknown Company',
+      job_title: jobTitle || 'Position',
+      company_name: companyName || 'Company',
       company_logo: companyLogo,
       location: location || 'Location not specified',
       posted_date: postedDate || 'Recently',
@@ -357,30 +283,37 @@ function extractJobListing(jobCard: cheerio.Cheerio, jobListings: LinkedInJobLis
       is_remote: isRemote,
       applicants: applicants,
       is_easy_apply: isEasyApply,
+      data_entity_urn: dataEntityUrn,
+      data_reference_id: dataReferenceId,
+      data_tracking_id: dataTrackingId,
     };
 
-    jobListings.push(jobListing);
+    // Add to list if it has minimal required info
+    if (jobUrl && jobId) {
+      jobListings.push(jobListing);
+    }
+
   } catch (error) {
     console.error('Error extracting job listing:', error);
   }
 }
 
-// Scrape detailed job information
+// Scrape detailed job information from job detail page
 export async function scrapeLinkedInJobDetail(jobUrl: string): Promise<LinkedInJobDetail> {
   try {
     console.log(`🔍 Scraping job detail: ${jobUrl}`);
     
-    // Add random delay
     await delay(3000 + Math.random() * 4000);
     
     const response = await axios.get(jobUrl, {
       headers: getHeaders('https://www.linkedin.com/jobs/'),
       timeout: 40000,
       maxRedirects: 5,
-      validateStatus: (status) => status === 200,
+      validateStatus: (status) => status < 500,
     });
 
     const $ = cheerio.load(response.data);
+    const jobId = extractJobIdFromUrl(jobUrl);
     
     const jobDetail: LinkedInJobDetail = {
       job_title: '',
@@ -390,207 +323,255 @@ export async function scrapeLinkedInJobDetail(jobUrl: string): Promise<LinkedInJ
       posted_date: '',
       applicants: '',
       description: '',
-      job_id: extractJobIdFromUrl(jobUrl),
+      job_id: jobId,
       requirements: [],
       benefits: [],
       skills: [],
     };
 
-    // Extract basic info using multiple selectors
-    const selectors = {
-      job_title: [
-        '.top-card-layout__title',
-        '.job-details-jobs-unified-top-card__job-title',
-        'h1',
-        '.jobs-unified-top-card__job-title',
-      ],
-      company_name: [
-        '.topcard__org-name-link',
-        '.job-details-jobs-unified-top-card__company-name',
-        '.jobs-unified-top-card__company-name',
-        '.jobs-unified-top-card__subtitle-primary',
-      ],
-      location: [
-        '.topcard__flavor--bullet',
-        '.job-details-jobs-unified-top-card__workplace-type',
-        '.jobs-unified-top-card__workplace-type',
-        '.jobs-unified-top-card__bullet',
-      ],
-      posted_date: [
-        '.posted-time-ago__text',
-        'time',
-        '.jobs-unified-top-card__posted-date',
-      ],
-      applicants: [
-        '.num-applicants__caption',
-        '.jobs-unified-top-card__applicant-count',
-      ],
-    };
+    // Extract from top card section
+    const topCard = $('.top-card-layout, .job-view-layout, .jobs-unified-top-card');
+    
+    // Job title
+    jobDetail.job_title = topCard.find('.top-card-layout__title, .jobs-unified-top-card__job-title, h1').first().text().trim() || '';
 
-    // Extract each field using multiple selectors
-    for (const [field, fieldSelectors] of Object.entries(selectors)) {
-      for (const selector of fieldSelectors) {
-        const element = $(selector);
-        if (element.length > 0) {
-          const text = element.text().trim();
-          if (text) {
-            (jobDetail as any)[field] = text;
-            break;
-          }
-        }
-      }
+    // Company name
+    jobDetail.company_name = topCard.find('.topcard__org-name-link, .jobs-unified-top-card__company-name').text().trim() || '';
+
+    // Company logo
+    const logoImg = topCard.find('img.artdeco-entity-image, .top-card-layout__logo img, .jobs-unified-top-card__company-logo img');
+    if (logoImg.length > 0) {
+      jobDetail.company_logo = logoImg.attr('src') || logoImg.attr('data-delayed-url') || '';
     }
 
-    // Extract company logo
-    const logoSelectors = [
-      'img.artdeco-entity-image',
-      '.top-card-layout__logo img',
-      '.jobs-unified-top-card__company-logo img',
-      'img[alt*="logo"]',
-    ];
+    // Location
+    jobDetail.location = topCard.find('.topcard__flavor--bullet, .jobs-unified-top-card__workplace-type').first().text().trim() || '';
 
-    for (const selector of logoSelectors) {
-      const logo = $(selector);
-      if (logo.length > 0) {
-        jobDetail.company_logo = logo.attr('src') || '';
-        if (jobDetail.company_logo) break;
-      }
+    // Posted date
+    jobDetail.posted_date = topCard.find('.posted-time-ago__text, time').first().text().trim() || '';
+
+    // Applicants
+    jobDetail.applicants = topCard.find('.num-applicants__caption, .jobs-unified-top-card__applicant-count').text().trim() || '';
+
+    // Extract data attributes
+    const dataEntityUrn = $('[data-entity-urn]').first().attr('data-entity-urn');
+    if (dataEntityUrn) {
+      jobDetail.data_entity_urn = dataEntityUrn;
     }
 
-    // Extract job description
-    const descSelectors = [
-      '.description__text',
-      '.jobs-description__content',
-      '.show-more-less-html__markup',
-      '.jobs-box__html-content',
-      '.jobs-description',
-    ];
+    // Extract description
+    const descriptionSection = $('.description__text, .jobs-description__content, .show-more-less-html__markup');
+    jobDetail.description = descriptionSection.text().trim() || $('body').text().substring(0, 5000);
 
-    for (const selector of descSelectors) {
-      const desc = $(selector);
-      if (desc.length > 0) {
-        jobDetail.description = desc.text().trim();
-        if (jobDetail.description) break;
-      }
-    }
-
-    // Extract job criteria (type, experience, salary)
+    // Extract job criteria
     $('.description__job-criteria-item, .jobs-unified-top-card__job-insight').each((_, element) => {
       const criteria = $(element);
-      const text = criteria.text().toLowerCase().trim();
+      const label = criteria.text().toLowerCase().trim();
       const value = criteria.find('span:last-child').text().trim();
       
-      if (text.includes('seniority') || text.includes('experience')) {
+      if (label.includes('seniority') || label.includes('experience')) {
         jobDetail.experience_level = value;
-      } else if (text.includes('employment') || text.includes('type')) {
+      } else if (label.includes('employment') || label.includes('type')) {
         jobDetail.job_type = value;
-      } else if (text.includes('salary') || text.includes('pay')) {
+      } else if (label.includes('salary') || label.includes('pay')) {
         jobDetail.salary = value;
+      } else if (label.includes('work from') || label.includes('remote')) {
+        jobDetail.work_from = value;
       }
     });
 
-    // Extract skills from the page
-    $('.jobs-description-details__list-item, .jobs-box__list-item, li').each((_, element) => {
+    // Extract skills
+    $('.jobs-description-details__list-item, .jobs-box__list-item, .jobs-ppc-criteria__list li').each((_, element) => {
       const skill = $(element).text().trim();
-      if (skill && skill.length < 50 && !skill.includes('•') && !skill.includes('-')) {
+      if (skill && skill.length < 50) {
         jobDetail.skills!.push(skill);
       }
     });
+
+    // Extract requirements from description
+    const descLower = jobDetail.description.toLowerCase();
+    const reqKeywords = ['requirement', 'qualification', 'must have', 'should have', 'need to have', 'responsibilit'];
+    
+    for (const keyword of reqKeywords) {
+      const startIdx = descLower.indexOf(keyword);
+      if (startIdx !== -1) {
+        const requirementText = jobDetail.description.substring(startIdx, startIdx + 1000);
+        const lines = requirementText.split('\n').filter(line => 
+          line.trim().length > 10 && 
+          (line.includes('•') || line.includes('-') || line.includes(':'))
+        );
+        jobDetail.requirements = lines.slice(0, 10).map(line => line.replace(/[•\-]\s*/, '').trim());
+        break;
+      }
+    }
 
     // Extract company URL
     const companyLink = $('a[data-tracking-control-name*="public_jobs_topcard-org-name"]');
     jobDetail.company_url = companyLink.attr('href') || '';
 
-    // Clean up data
+    // Extract company about
+    const companyAbout = $('.about-company, .jobs-company__box').text().trim();
+    if (companyAbout) {
+      jobDetail.company_about = companyAbout.substring(0, 1000);
+    }
+
+    // Extract benefits
+    const benefitsKeywords = ['benefit', 'perk', 'compensation', 'bonus', 'insurance', 'vacation'];
+    for (const keyword of benefitsKeywords) {
+      const startIdx = descLower.indexOf(keyword);
+      if (startIdx !== -1) {
+        const benefitText = jobDetail.description.substring(startIdx, startIdx + 500);
+        const lines = benefitText.split('\n').filter(line => 
+          line.trim().length > 5 && 
+          (line.includes('•') || line.includes('-') || line.includes(':'))
+        );
+        jobDetail.benefits = lines.slice(0, 10).map(line => line.replace(/[•\-]\s*/, '').trim());
+        break;
+      }
+    }
+
+    // Extract visa and relocation info
+    if (descLower.includes('visa') || descLower.includes('sponsorship')) {
+      jobDetail.visa_sponsorship = true;
+    }
+    
+    if (descLower.includes('relocation') || descLower.includes('relocate')) {
+      jobDetail.relocation_assistance = true;
+    }
+
+    // Extract HR info patterns
+    const hrPatterns = [
+      /(?:hr|human resources|recruiter|hiring manager)\s*[:]?\s*([A-Za-z\s]+)/i,
+      /contact\s*[:]?\s*([A-Za-z\s]+)/i,
+      /hiring\s*[:]?\s*([A-Za-z\s]+)/i,
+    ];
+    
+    for (const pattern of hrPatterns) {
+      const match = jobDetail.description.match(pattern);
+      if (match && match[1]) {
+        jobDetail.hr_name = match[1].trim();
+        break;
+      }
+    }
+
+    // Look for LinkedIn profile links
+    const linkedinLinks = jobDetail.description.match(/linkedin\.com\/in\/[A-Za-z0-9-]+/g);
+    if (linkedinLinks && linkedinLinks.length > 0) {
+      jobDetail.hr_linkedin = `https://www.${linkedinLinks[0]}`;
+    }
+
+    // Look for reviews/ratings patterns
+    const reviewPatterns = [
+      /(?:rating|review|score)\s*[:]?\s*(\d+(?:\.\d+)?)/i,
+      /(\d+(?:\.\d+)?)\s*out of \s*\d+/i,
+    ];
+    
+    for (const pattern of reviewPatterns) {
+      const match = jobDetail.description.match(pattern);
+      if (match && match[1]) {
+        const rating = parseFloat(match[1]);
+        if (rating >= 0 && rating <= 5) {
+          jobDetail.company_rating = rating;
+          break;
+        }
+      }
+    }
+
+    // Clean up arrays
     jobDetail.skills = jobDetail.skills!.filter(skill => 
-      skill.length > 2 && skill.length < 30
+      skill.length > 2 && skill.length < 100
+    ).slice(0, 15);
+
+    jobDetail.requirements = jobDetail.requirements!.filter(req => 
+      req.length > 5 && req.length < 200
     ).slice(0, 10);
 
-    // If we couldn't extract much, use fallback data
-    if (!jobDetail.job_title) {
-      const urlParts = jobUrl.split('/');
-      const lastPart = urlParts[urlParts.length - 1];
-      jobDetail.job_title = lastPart.split('-').map(word => 
-        word.charAt(0).toUpperCase() + word.slice(1)
-      ).join(' ') || 'Job Position';
-    }
+    jobDetail.benefits = jobDetail.benefits!.filter(benefit => 
+      benefit.length > 5 && benefit.length < 200
+    ).slice(0, 10);
 
-    if (!jobDetail.company_name) {
-      jobDetail.company_name = 'Company';
-    }
-
-    if (!jobDetail.description) {
-      jobDetail.description = `Job description for ${jobDetail.job_title} at ${jobDetail.company_name}.`;
-    }
-
-    console.log(`✅ Extracted detail for: ${jobDetail.job_title}`);
+    console.log(`✅ Extracted detail for: ${jobDetail.job_title || 'Job'}`);
     
     return jobDetail;
 
   } catch (error: any) {
     console.error(`Error scraping job detail ${jobUrl}:`, error.message);
     
-    // Return mock data if scraping fails
-    return getMockJobDetail(jobUrl);
+    // Return minimal data instead of mock
+    const jobId = extractJobIdFromUrl(jobUrl);
+    return {
+      job_title: 'Job Position',
+      company_name: 'Company',
+      company_logo: '',
+      location: 'Location not specified',
+      posted_date: 'Recently',
+      applicants: '',
+      description: 'Failed to extract description',
+      job_id: jobId,
+      requirements: [],
+      benefits: [],
+      skills: [],
+    };
   }
 }
 
-// Get mock job detail for testing
-function getMockJobDetail(jobUrl: string): LinkedInJobDetail {
-  const jobId = extractJobIdFromUrl(jobUrl);
-  const titles = ['Software Engineer', 'Product Manager', 'Data Analyst', 'UX Designer', 'Marketing Specialist'];
-  const companies = ['Tech Corp', 'Digital Solutions', 'Innovate Inc', 'Global Systems', 'Future Tech'];
-  
-  return {
-    job_title: titles[Math.floor(Math.random() * titles.length)],
-    company_name: companies[Math.floor(Math.random() * companies.length)],
-    company_logo: 'https://via.placeholder.com/100',
-    location: 'Jaipur, Rajasthan, India',
-    posted_date: `${Math.floor(Math.random() * 30) + 1} days ago`,
-    applicants: `${Math.floor(Math.random() * 200) + 1} applicants`,
-    job_type: 'Full-time',
-    salary: '$80,000 - $120,000',
-    experience_level: 'Mid-Senior level',
-    description: 'This is a job description with responsibilities and requirements for the position.',
-    requirements: ['Bachelor\'s degree', '3+ years experience', 'Strong communication skills'],
-    benefits: ['Health insurance', 'Remote work options', 'Professional development'],
-    skills: ['JavaScript', 'React', 'Node.js', 'MongoDB'],
-    company_about: 'A leading company in the industry.',
-    company_url: 'https://example.com',
-    job_id: jobId,
-  };
-}
-
 // Batch scrape multiple job details
-export async function batchScrapeJobDetails(jobListings: LinkedInJobListing[]): Promise<LinkedInJobDetail[]> {
+export async function batchScrapeJobDetails(jobListings: LinkedInJobListing[], maxJobs: number = 50): Promise<LinkedInJobDetail[]> {
   const jobDetails: LinkedInJobDetail[] = [];
+  const jobsToScrape = jobListings.slice(0, maxJobs);
   
-  console.log(`🔄 Starting batch scrape of ${jobListings.length} jobs...`);
+  console.log(`🔄 Starting batch scrape of ${jobsToScrape.length} jobs...`);
   
-  for (let i = 0; i < jobListings.length; i++) {
-    const listing = jobListings[i];
-    console.log(`(${i + 1}/${jobListings.length}) Scraping: ${listing.job_title}`);
+  for (let i = 0; i < jobsToScrape.length; i++) {
+    const listing = jobsToScrape[i];
+    console.log(`(${i + 1}/${jobsToScrape.length}) Scraping: ${listing.job_title}`);
     
     try {
-      // Add progressive delay (longer as we go)
-      const baseDelay = 3000;
-      const randomDelay = Math.random() * 4000;
-      const progressiveDelay = i * 1000;
+      // Progressive delay
+      const baseDelay = 2000;
+      const randomDelay = Math.random() * 3000;
+      const progressiveDelay = i * 500;
       const totalDelay = baseDelay + randomDelay + progressiveDelay;
       
       await delay(totalDelay);
       
       const detail = await scrapeLinkedInJobDetail(listing.job_url);
-      jobDetails.push(detail);
+      
+      // Merge listing data with detail
+      const mergedDetail: LinkedInJobDetail = {
+        ...detail,
+        job_id: listing.job_id || detail.job_id,
+        data_entity_urn: listing.data_entity_urn,
+        job_title: listing.job_title || detail.job_title,
+        company_name: listing.company_name || detail.company_name,
+        company_logo: listing.company_logo || detail.company_logo,
+        location: listing.location || detail.location,
+        posted_date: listing.posted_date || detail.posted_date,
+        applicants: listing.applicants || detail.applicants,
+      };
+      
+      jobDetails.push(mergedDetail);
       
     } catch (error) {
       console.error(`Failed to scrape ${listing.job_url}:`, error);
-      // Add mock data for failed scrape
-      jobDetails.push(getMockJobDetail(listing.job_url));
+      // Add minimal data for failed scrapes
+      jobDetails.push({
+        job_title: listing.job_title || 'Job',
+        company_name: listing.company_name || 'Company',
+        company_logo: listing.company_logo,
+        location: listing.location || 'Location not specified',
+        posted_date: listing.posted_date || 'Recently',
+        applicants: listing.applicants || '',
+        description: 'Failed to extract full description',
+        job_id: listing.job_id,
+        requirements: [],
+        benefits: [],
+        skills: [],
+      });
     }
   }
   
-  console.log(`✅ Completed batch scrape. Successfully scraped ${jobDetails.length}/${jobListings.length} jobs`);
+  console.log(`✅ Completed batch scrape. Processed ${jobDetails.length}/${jobsToScrape.length} jobs`);
   return jobDetails;
 }
 
@@ -598,29 +579,42 @@ export async function batchScrapeJobDetails(jobListings: LinkedInJobListing[]): 
 export function convertToJobScrapedData(detail: LinkedInJobDetail, listing: LinkedInJobListing): Partial<JobScrapedData> {
   return {
     url: listing.job_url,
-    job_title: detail.job_title,
-    company_name: detail.company_name,
+    job_title: detail.job_title || listing.job_title,
+    company_name: detail.company_name || listing.company_name,
     company_url: detail.company_url,
-    company_logo: detail.company_logo,
-    location: detail.location,
+    company_logo: detail.company_logo || listing.company_logo,
+    location: detail.location || listing.location,
     job_type: detail.job_type,
-    posted_date: parsePostedDate(detail.posted_date),
+    posted_date: parsePostedDate(detail.posted_date || listing.posted_date),
     description: detail.description,
     requirements: detail.requirements?.join('\n'),
     skills: detail.skills,
     salary: detail.salary,
     experience: detail.experience_level,
-    job_id: detail.job_id,
+    job_id: detail.job_id || listing.job_id,
     source: 'linkedin',
     status: 'completed',
     is_active: true,
     scraped_at: new Date(),
+    work_from: detail.work_from,
+    hr_name: detail.hr_name,
+    hr_linkedin: detail.hr_linkedin,
+    review: detail.review,
+    company_rating: detail.company_rating,
+    visa_sponsorship: detail.visa_sponsorship,
+    relocation_assistance: detail.relocation_assistance,
+    metadata: {
+      data_entity_urn: listing.data_entity_urn,
+      data_reference_id: listing.data_reference_id,
+      data_tracking_id: listing.data_tracking_id,
+      source_url: listing.job_url,
+    }
   };
 }
 
 // Helper function to parse posted date
 function parsePostedDate(dateString: string): Date | null {
-  if (!dateString) return null;
+  if (!dateString) return new Date();
   
   const now = new Date();
   
@@ -651,8 +645,6 @@ function parsePostedDate(dateString: string): Date | null {
     // Ignore parse error
   }
   
-  // Default to current date minus random days
-  const randomDaysAgo = Math.floor(Math.random() * 30);
-  now.setDate(now.getDate() - randomDaysAgo);
-  return now;
+  // Default to current date
+  return new Date();
 }
