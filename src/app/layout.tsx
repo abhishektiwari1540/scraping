@@ -1,9 +1,7 @@
 // src/app/layout.tsx
-import type { Metadata } from 'next'
-
-export const metadata: Metadata = {
-  title: 'Job Scraper',
-  description: 'Job scraping application',
+export const metadata = {
+  title: 'Job Scraper API',
+  description: 'API for job scraping',
 }
 
 export default function RootLayout({
@@ -13,9 +11,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <head />
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Job Scraper API</title>
+      </head>
       <body>
-        {children}
+        <main>
+          {children}
+        </main>
       </body>
     </html>
   )
