@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import ScrapedData from '@/models/ScrapedData';
+import PipedreamScheduler, { TECH_KEYWORDS } from '@/utils/pipedreamScheduler';
+
 import { 
   scrapeLinkedInSearch, 
   batchScrapeJobDetails, 
@@ -462,8 +464,32 @@ async function handleSingleJobScrape(
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
   const searchParams = request.nextUrl.searchParams;
+    const action = searchParams.get('action');
   const test = searchParams.get('test');
   
+  const scheduler = PipedreamScheduler.getInstance();
+  
+  switch (action) {
+    case 'start-overnight':
+      return await handleStartOvernight(scheduler);
+      
+    case 'status':
+      return await handleGetStatus(scheduler);
+      
+    case 'stop':
+      return await handleStopScraping(scheduler);
+      
+    case 'results':
+      return await handleGetResults(scheduler);
+      
+    case 'queue':
+      return await handleGetQueue(scheduler);
+      
+    case 'keywords':
+      return await handleGetKeywords();
+      
+    case 'test-pipedream':
+      return await handleTestPipedream();
   if (test === 'connection') {
     try {
       await dbConnect();
@@ -484,13 +510,151 @@ export async function GET(request: NextRequest) {
   }
   
   return NextResponse.json({
+        success: true,
+        message: 'LinkedIn Scraper API',
+        endpoints: {
+          'GET ?action=start-overnight': 'Start overnight scraping',
+          'GET ?action=status': 'Get scraping status',
+          'GET ?action=stop': 'Stop scraping',
+          'GET ?action=results': 'Get results summary',
+          'GET ?action=queue': 'Get job queue',
+          'GET ?action=keywords': 'Get all keywords',
+          'GET ?action=test-pipedream': 'Test Pipedream webhook',
+          'POST /': 'Scrape single URL (existing)'
+        },
+        pipedreamWebhook: 'https://eo3fx7vdzhapezn.m.pipedream.net'
+      });
+}
+}
+
+
+async function handleStartOvernight(scheduler: any) {
+  try {
+    // Start in background (non-blocking)
+    scheduler.startOvernightScraping().catch(console.error);
+    
+    return NextResponse.json({
+      success: true,
+      message: 'Overnight scraping started in background',
+      status: 'processing',
+      keywords: TECH_KEYWORDS.length,
+      location: 'Jaipur',
+      estimatedTime: `${Math.ceil(TECH_KEYWORDS.length * 15 / 60)} hours`,
+      pipedreamWebhook: 'https://eo3fx7vdzhapezn.m.pipedream.net',
+      monitor: 'Check /api/scrape?action=status for progress'
+    }, { status: 202 }); // 202 Accepted
+    
+  } catch (error) {
+    return NextResponse.json({
+      success: false,
+      error: 'Failed to start scraping',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
+  }
+}
+
+async function handleGetStatus(scheduler: any) {
+  const status = scheduler.getStatus();
+  
+  return NextResponse.json({
     success: true,
-    message: 'Scrape API is running',
-    endpoints: {
-      POST: 'Scrape a job or search page',
-      'GET ?test=connection': 'Test database connection'
+    timestamp: new Date().toISOString(),
+    scraping: status.isRunning,
+    progress: status.progress,
+    currentJob: `${status.currentJob}/${status.totalJobs}`,
+    currentKeyword: status.currentKeyword,
+    results: {
+      totalSaved: status.totalSaved,
+      totalFound: status.totalFound,
+      recent: status.results
     },
-    timeout: 'Max 300 seconds (5 minutes)',
-    executionTime: `${Date.now() - startTime}ms`
-  }, { status: 200 });
+    estimatedTimeRemaining: status.estimatedTimeRemaining,
+    pipedream: 'Updates sent to https://eo3fx7vdzhapezn.m.pipedream.net'
+  });
+}
+
+async function handleStopScraping(scheduler: any) {
+  scheduler.stopScraping();
+  
+  return NextResponse.json({
+    success: true,
+    message: 'Scraping stopped',
+    timestamp: new Date().toISOString()
+  });
+}
+
+async function handleGetResults(scheduler: any) {
+  const summary = scheduler.getResultsSummary();
+  
+  return NextResponse.json({
+    success: true,
+    summary: summary,
+    timestamp: new Date().toISOString()
+  });
+}
+
+async function handleGetQueue(scheduler: any) {
+  const queue = scheduler.getJobQueue();
+  
+  return NextResponse.json({
+    success: true,
+    totalJobs: queue.length,
+    completed: queue.filter(j => j.status === 'completed').length,
+    failed: queue.filter(j => j.status === 'failed').length,
+    pending: queue.filter(j => j.status === 'pending').length,
+    queue: queue.slice(0, 20) // First 20 jobs
+  });
+}
+
+async function handleGetKeywords() {
+  return NextResponse.json({
+    success: true,
+    totalKeywords: TECH_KEYWORDS.length,
+    keywords: TECH_KEYWORDS,
+    categories: {
+      frontend: TECH_KEYWORDS.filter(k => 
+        ['react', 'angular', 'vue', 'javascript', 'typescript', 'frontend', 'ui'].some(t => k.includes(t))
+      ),
+      backend: TECH_KEYWORDS.filter(k => 
+        ['node', 'python', 'java', 'php', '.net', 'backend', 'spring'].some(t => k.includes(t))
+      ),
+      fullstack: TECH_KEYWORDS.filter(k => 
+        ['full stack', 'mern', 'mean', 'web developer'].some(t => k.includes(t))
+      ),
+      entryLevel: TECH_KEYWORDS.filter(k => 
+        ['fresher', 'intern', 'trainee', 'junior', 'entry level'].some(t => k.includes(t))
+      )
+    }
+  });
+}
+
+async function handleTestPipedream() {
+  try {
+    const response = await axios.post(
+      'https://eo3fx7vdzhapezn.m.pipedream.net',
+      {
+        event: 'test',
+        message: 'Testing Pipedream webhook connection',
+        timestamp: new Date().toISOString(),
+        source: 'linkedin-jaipur-scraper',
+        status: 'success'
+      },
+      { timeout: 5000 }
+    );
+    
+    return NextResponse.json({
+      success: true,
+      message: 'Pipedream webhook test successful',
+      status: response.status,
+      pipedreamUrl: 'https://eo3fx7vdzhapezn.m.pipedream.net'
+    });
+    
+  } catch (error) {
+    return NextResponse.json({
+      success: false,
+      error: 'Pipedream webhook test failed',
+      details: error instanceof Error ? error.message : 'Unknown error',
+      pipedreamUrl: 'https://eo3fx7vdzhapezn.m.pipedream.net'
+    }, { status: 500 });
+  }
 }
