@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { JobScrapedData } from './types';
@@ -165,10 +166,8 @@ export async function scrapeLinkedInSearch(url: string): Promise<LinkedInJobList
   }
 }
 
-// Define a type for Cheerio elements
-type CheerioAPI = typeof cheerio;
-type CheerioElement = cheerio.Element;
-type CheerioSelection = cheerio.Cheerio<CheerioElement>;
+// Define a type for Cheerio elements using TypeScript's built-in Element type
+type CheerioSelection = cheerio.Cheerio<any>;
 
 // Extract job listing from a job card
 function extractJobListingFromCard(jobCard: CheerioSelection, jobListings: LinkedInJobListing[]): void {
