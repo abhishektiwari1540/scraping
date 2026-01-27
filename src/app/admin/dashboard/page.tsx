@@ -8,10 +8,10 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   ChartBarIcon,
-  ArchiveBoxIcon,
   ArrowPathIcon,
   BellAlertIcon,
-  CpuChipIcon
+  CpuChipIcon,
+  ArchiveBoxIcon
 } from '@heroicons/react/24/outline';
 
 // Types
@@ -214,6 +214,76 @@ export default function DashboardPage() {
     generateJobStats();
   }, [fetchStatus, fetchStats]);
 
+  // Simple chart component
+  const SimpleChart = ({ data }: { data: JobStat[] }) => {
+    if (data.length === 0) return null;
+    
+    const maxJobs = Math.max(...data.map(d => d.jobs));
+    
+    return (
+      <div className="h-64 relative">
+        <div className="ml-10 h-full relative">
+          <div className="flex h-full items-end justify-between pt-4">
+            {data.map((item, index) => (
+              <div key={index} className="flex flex-col items-center flex-1">
+                <div 
+                  className="w-3/4 bg-gradient-to-t from-blue-500 to-blue-300 rounded-t-lg transition-all duration-500 hover:opacity-80 cursor-pointer"
+                  style={{ 
+                    height: `${(item.jobs / maxJobs) * 100}%`,
+                    minHeight: '2px'
+                  }}
+                  title={`${item.jobs} jobs on ${item.date}`}
+                />
+                <div className="mt-2 text-xs text-gray-500 truncate w-full text-center">
+                  {item.date}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Simple jobs table
+  const SimpleJobsTable = ({ jobs }: { jobs: any[] }) => {
+    if (jobs.length === 0) {
+      return (
+        <div className="text-center py-12">
+          <div className="text-gray-400 mb-2">No jobs scraped yet</div>
+          <p className="text-gray-500 text-sm">Start the scraper to collect jobs</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead>
+            <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Job Title</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Posted</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200">
+            {jobs.slice(0, 5).map((job) => (
+              <tr key={job._id} className="hover:bg-gray-50">
+                <td className="px-4 py-3 text-sm font-medium text-gray-900 truncate max-w-xs">
+                  {job.job_title || 'N/A'}
+                </td>
+                <td className="px-4 py-3 text-sm text-gray-900">{job.company_name || 'N/A'}</td>
+                <td className="px-4 py-3 text-sm text-gray-500">
+                  {job.posted_date ? new Date(job.posted_date).toLocaleDateString() : 'N/A'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header Section */}
@@ -230,9 +300,9 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-4 md:mt-0">
-            <div className={`px-4 py-2 rounded-lg ${status?.scraping ? 'bg-green-500' : 'bg-gray-700'} text-center`}>
+            <div className={`px-4 py-2 rounded-lg ${status?.isRunning ? 'bg-green-500' : 'bg-gray-700'} text-center`}>
               <div className="text-sm font-medium">Status</div>
-              <div className="text-xl font-bold mt-1">{status?.scraping ? 'RUNNING' : 'READY'}</div>
+              <div className="text-xl font-bold mt-1">{status?.isRunning ? 'RUNNING' : 'READY'}</div>
             </div>
           </div>
         </div>
@@ -269,7 +339,7 @@ export default function DashboardPage() {
           <div className="flex flex-col items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl">
             <div className="text-3xl font-bold text-blue-700 mb-2">{stats?.totalJobsSaved || 0}</div>
             <div className="text-gray-600">Total Jobs Saved</div>
-            <DatabaseIcon className="h-8 w-8 text-blue-500 mt-3" />
+            <ArchiveBoxIcon className="h-8 w-8 text-blue-500 mt-3" />
           </div>
           
           <div className="flex flex-col items-center justify-center p-6 bg-gradient-to-br from-green-50 to-green-100 rounded-xl">
@@ -288,9 +358,9 @@ export default function DashboardPage() {
         <div className="flex flex-wrap gap-4">
           <button
             onClick={startScraping}
-            disabled={loading || status?.scraping}
+            disabled={loading || status?.isRunning}
             className={`flex items-center px-6 py-3 rounded-lg font-medium text-white ${
-              (loading || status?.scraping) 
+              (loading || status?.isRunning) 
                 ? 'bg-gray-400 cursor-not-allowed' 
                 : 'bg-green-600 hover:bg-green-700'
             }`}
@@ -300,7 +370,7 @@ export default function DashboardPage() {
                 <ArrowPathIcon className="h-5 w-5 mr-2 animate-spin" />
                 Starting...
               </>
-            ) : status?.scraping ? (
+            ) : status?.isRunning ? (
               <>
                 <PlayIcon className="h-5 w-5 mr-2" />
                 Scraping in Progress
@@ -315,9 +385,9 @@ export default function DashboardPage() {
           
           <button
             onClick={stopScraping}
-            disabled={!status?.scraping}
+            disabled={!status?.isRunning}
             className={`flex items-center px-6 py-3 rounded-lg font-medium ${
-              !status?.scraping 
+              !status?.isRunning 
                 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
                 : 'bg-red-600 hover:bg-red-700 text-white'
             }`}
@@ -331,7 +401,7 @@ export default function DashboardPage() {
             className="flex items-center px-6 py-3 rounded-lg font-medium bg-blue-600 hover:bg-blue-700 text-white"
           >
             <BellAlertIcon className="h-5 w-5 mr-2" />
-            Test Pipedream Webhook
+            Test Pipedream
           </button>
           
           <button
@@ -352,20 +422,20 @@ export default function DashboardPage() {
           <div className="mb-6">
             <div className="flex justify-between mb-2">
               <span className="text-sm font-medium text-gray-700">
-                {status.scraping ? 'Scraping in progress...' : 'Ready to start'}
+                {status.isRunning ? 'Scraping in progress...' : 'Ready to start'}
               </span>
               <span className="text-sm font-bold text-blue-600">{status.progress}%</span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-4">
               <div 
                 className={`h-4 rounded-full transition-all duration-500 ${
-                  status.scraping ? 'bg-gradient-to-r from-green-400 to-blue-500' : 'bg-gray-300'
+                  status.isRunning ? 'bg-gradient-to-r from-green-400 to-blue-500' : 'bg-gray-300'
                 }`}
                 style={{ width: `${status.progress}%` }}
               ></div>
             </div>
             
-            {status.scraping && (
+            {status.isRunning && (
               <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-3 bg-blue-50 rounded-lg">
                   <div className="text-sm text-gray-600">Current Keyword</div>
@@ -386,84 +456,18 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-
-          {/* Recent Results Table */}
-          {status.results.recent && status.results.recent.length > 0 && (
-            <div>
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Recent Scraping Results</h3>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead>
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Keyword
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Jobs Saved
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Success Rate
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {status.results.recent.map((result, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                          {result.keyword}
-                        </td>
-                        <td className="px-4 py-3">
-                          {result.total > 0 ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                              <CheckCircleIcon className="h-3 w-3 mr-1" />
-                              Success
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                              <XCircleIcon className="h-3 w-3 mr-1" />
-                              No Data
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          <div className="font-semibold">{result.saved}</div>
-                          <div className="text-xs text-gray-500">out of {result.total}</div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center">
-                            <div className="w-full bg-gray-200 rounded-full h-2 mr-2">
-                              <div 
-                                className="bg-green-500 h-2 rounded-full"
-                                style={{ width: `${result.total > 0 ? (result.saved / result.total) * 100 : 0}%` }}
-                              ></div>
-                            </div>
-                            <span className="text-sm text-gray-700">
-                              {result.total > 0 ? Math.round((result.saved / result.total) * 100) : 0}%
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
-      {/* Charts and Graphs */}
+      {/* Charts and Notifications */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Jobs Over Time Chart */}
+        {/* Jobs Chart */}
         <div className="bg-white rounded-xl shadow p-6">
           <h2 className="text-xl font-bold text-gray-800 mb-6">Jobs Collected Over Time</h2>
-          <RealTimeChart data={jobStats} />
+          <SimpleChart data={jobStats} />
         </div>
 
-        {/* Notifications Panel */}
+        {/* Notifications */}
         <div className="bg-white rounded-xl shadow p-6">
           <h2 className="text-xl font-bold text-gray-800 mb-6">Recent Notifications</h2>
           <div className="space-y-4">
@@ -483,55 +487,14 @@ export default function DashboardPage() {
                 </div>
               </div>
             ))}
-            
-            {notifications.length === 0 && (
-              <div className="text-center py-8 text-gray-500">
-                No notifications yet
-              </div>
-            )}
           </div>
-          
-          <button
-            onClick={() => setNotifications([])}
-            className="mt-4 text-sm text-blue-600 hover:text-blue-800"
-          >
-            Clear all notifications
-          </button>
         </div>
       </div>
 
-      {/* Recent Jobs Table */}
+      {/* Recent Jobs */}
       <div className="bg-white rounded-xl shadow p-6">
         <h2 className="text-xl font-bold text-gray-800 mb-6">Recently Scraped Jobs</h2>
-        <JobsTable jobs={recentJobs} />
-        <div className="mt-4 text-center">
-          <button
-            onClick={fetchRecentJobs}
-            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-          >
-            Load more jobs →
-          </button>
-        </div>
-      </div>
-
-      {/* Quick Stats Footer */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl p-4 text-white">
-          <div className="text-2xl font-bold">{stats?.totalKeywords || 45}</div>
-          <div className="text-sm opacity-90">Keywords</div>
-        </div>
-        <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-xl p-4 text-white">
-          <div className="text-2xl font-bold">{recentJobs.length}</div>
-          <div className="text-sm opacity-90">Today's Jobs</div>
-        </div>
-        <div className="bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl p-4 text-white">
-          <div className="text-2xl font-bold">100%</div>
-          <div className="text-sm opacity-90">System Uptime</div>
-        </div>
-        <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-xl p-4 text-white">
-          <div className="text-2xl font-bold">24/7</div>
-          <div className="text-sm opacity-90">Monitoring</div>
-        </div>
+        <SimpleJobsTable jobs={recentJobs} />
       </div>
 
       {/* Footer Info */}
@@ -539,7 +502,7 @@ export default function DashboardPage() {
         <div className="flex flex-col md:flex-row justify-between items-center">
           <div>
             <h3 className="text-lg font-bold">Pipedream Webhook Integration</h3>
-            <p className="text-gray-300 mt-1">All scraping events are logged to Pipedream for monitoring</p>
+            <p className="text-gray-300 mt-1">All scraping events are logged to Pipedream</p>
             <div className="mt-3">
               <code className="bg-gray-900 px-3 py-1 rounded text-sm font-mono">
                 https://eo3fx7vdzhapezn.m.pipedream.net
@@ -547,20 +510,12 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="mt-4 md:mt-0">
-            <div className="flex space-x-4">
-              <button 
-                onClick={() => window.open('https://pipedream.com', '_blank')}
-                className="px-4 py-2 bg-white text-gray-800 rounded-lg font-medium hover:bg-gray-100"
-              >
-                Open Pipedream
-              </button>
-              <button 
-                onClick={testPipedream}
-                className="px-4 py-2 bg-blue-500 rounded-lg font-medium hover:bg-blue-600"
-              >
-                Send Test Event
-              </button>
-            </div>
+            <button 
+              onClick={testPipedream}
+              className="px-4 py-2 bg-blue-500 rounded-lg font-medium hover:bg-blue-600"
+            >
+              Send Test Event
+            </button>
           </div>
         </div>
       </div>
