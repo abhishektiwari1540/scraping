@@ -1,5 +1,6 @@
 import dbConnect from '@/lib/mongodb';
 import ScrapedData from '@/models/ScrapedData';
+import mongoose from 'mongoose';
 
 export interface DatabaseHealth {
   status: 'healthy' | 'unhealthy';
@@ -26,7 +27,21 @@ export async function checkDatabaseHealth(): Promise<DatabaseHealth> {
     
     // Check connection by running a simple query
     const count = await ScrapedData.countDocuments({});
-    const stats = await ScrapedData.collection.stats();
+    
+    // Check if database connection is active
+    const db = mongoose.connection.db;
+    if (!db) {
+      throw new Error('Database connection not established');
+    }
+    
+    // Get database stats (optional - can be removed if not needed)
+    let stats;
+    try {
+      stats = await db.stats();
+    } catch (statsError) {
+      // If stats fail, just log it but don't fail the health check
+      console.log('⚠️ Database stats not available:', statsError);
+    }
     
     return {
       status: 'healthy',
