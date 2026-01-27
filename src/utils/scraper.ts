@@ -62,9 +62,14 @@ function getRandomUserAgent(): string {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
+// Define headers type
+interface AxiosHeaders {
+  [key: string]: string;
+}
+
 // Get headers
-function getHeaders(referer?: string) {
-  const headers: any = {
+function getHeaders(referer?: string): AxiosHeaders {
+  const headers: AxiosHeaders = {
     'User-Agent': getRandomUserAgent(),
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
@@ -153,14 +158,20 @@ export async function scrapeLinkedInSearch(url: string): Promise<LinkedInJobList
     // Return all jobs found (not limited to 5)
     return jobListings;
 
-  } catch (error: any) {
-    console.error('Error scraping LinkedIn search:', error.message);
-    throw new Error(`Failed to scrape LinkedIn search: ${error.message}`);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error scraping LinkedIn search:', errorMessage);
+    throw new Error(`Failed to scrape LinkedIn search: ${errorMessage}`);
   }
 }
 
+// Define a type for Cheerio elements
+type CheerioAPI = typeof cheerio;
+type CheerioElement = cheerio.Element;
+type CheerioSelection = cheerio.Cheerio<CheerioElement>;
+
 // Extract job listing from a job card
-function extractJobListingFromCard(jobCard: cheerio.Cheerio, jobListings: LinkedInJobListing[]): void {
+function extractJobListingFromCard(jobCard: CheerioSelection, jobListings: LinkedInJobListing[]): void {
   try {
     // Get data attributes
     const dataEntityUrn = jobCard.attr('data-entity-urn') || '';
@@ -293,8 +304,9 @@ function extractJobListingFromCard(jobCard: cheerio.Cheerio, jobListings: Linked
       jobListings.push(jobListing);
     }
 
-  } catch (error) {
-    console.error('Error extracting job listing:', error);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error extracting job listing:', errorMessage);
   }
 }
 
@@ -494,8 +506,8 @@ export async function scrapeLinkedInJobDetail(jobUrl: string): Promise<LinkedInJ
     
     return jobDetail;
 
-  } catch (error: any) {
-    console.error(`Error scraping job detail ${jobUrl}:`, error.message);
+  } catch (error: unknown) {
+    console.error(`Error scraping job detail ${jobUrl}:`, error instanceof Error ? error.message : 'Unknown error');
     
     // Return minimal data instead of mock
     const jobId = extractJobIdFromUrl(jobUrl);
@@ -552,8 +564,9 @@ export async function batchScrapeJobDetails(jobListings: LinkedInJobListing[], m
       
       jobDetails.push(mergedDetail);
       
-    } catch (error) {
-      console.error(`Failed to scrape ${listing.job_url}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`Failed to scrape ${listing.job_url}:`, errorMessage);
       // Add minimal data for failed scrapes
       jobDetails.push({
         job_title: listing.job_title || 'Job',
