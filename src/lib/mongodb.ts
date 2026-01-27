@@ -9,12 +9,16 @@ if (!MONGODB_URI) {
   );
 }
 
+// Since we've already thrown an error if MONGODB_URI is undefined,
+// we can safely assert it's a string here
+const mongoUri: string = MONGODB_URI;
+
 // Debug output
 console.log('🔍 Checking MongoDB connection...');
-const maskedUri = MONGODB_URI.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@');
+const maskedUri = mongoUri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@');
 console.log('URI (masked):', maskedUri);
 console.log('URI starts correctly:', 
-  MONGODB_URI.startsWith('mongodb://') || MONGODB_URI.startsWith('mongodb+srv://'));
+  mongoUri.startsWith('mongodb://') || mongoUri.startsWith('mongodb+srv://'));
 
 // Define types for cached connection
 interface MongooseCache {
@@ -33,9 +37,6 @@ if (!global.mongooseGlobal) {
 }
 
 async function dbConnect(): Promise<typeof mongoose> {
-  // Store MONGODB_URI in a local variable that TypeScript knows is defined
-  const mongoUri = MONGODB_URI;
-  
   if (cached.conn) {
     console.log('✅ Using cached MongoDB connection');
     return cached.conn;
