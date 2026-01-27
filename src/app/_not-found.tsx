@@ -1,5 +1,5 @@
 // src/app/_not-found.tsx
-// NO 'use client' directive for this one
+// NO 'use client' directive here
 
 export default function NotFound() {
   return (
