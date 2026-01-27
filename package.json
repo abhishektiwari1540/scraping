@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@netlify/functions": "^5.1.2",
     "axios": "^1.13.2",
     "cheerio": "^1.2.0",
     "http-proxy-middleware": "^3.0.5",
