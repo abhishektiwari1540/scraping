@@ -8,14 +8,11 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   ChartBarIcon,
-  DatabaseIcon,
+  ArchiveBoxIcon,
   ArrowPathIcon,
   BellAlertIcon,
   CpuChipIcon
 } from '@heroicons/react/24/outline';
-import RealTimeChart from '../components/RealTimeChart';
-import JobsTable from '../components/JobsTable';
-import KeywordsManager from '../components/KeywordsManager';
 
 // Types
 interface ScrapingStatus {

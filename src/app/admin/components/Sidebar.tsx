@@ -5,21 +5,21 @@ import Link from 'next/link';
 import { 
   HomeIcon, 
   ChartBarIcon, 
-  DatabaseIcon, 
   CogIcon,
   BellIcon,
-  CloudDownloadIcon,
+  CloudArrowDownIcon,
   CalendarIcon,
-  ViewGridIcon
+  Squares2X2Icon,
+  ArchiveBoxIcon
 } from '@heroicons/react/24/outline';
 
 const navigation = [
   { name: 'Dashboard', href: '/admin/dashboard', icon: HomeIcon, current: true },
-  { name: 'Jobs Database', href: '/admin/jobs', icon: DatabaseIcon, current: false },
+  { name: 'Jobs Database', href: '/admin/jobs', icon: ArchiveBoxIcon, current: false },
   { name: 'Scraping Stats', href: '/admin/stats', icon: ChartBarIcon, current: false },
   { name: 'Schedule', href: '/admin/schedule', icon: CalendarIcon, current: false },
   { name: 'Notifications', href: '/admin/notifications', icon: BellIcon, current: false },
-  { name: 'Keywords', href: '/admin/keywords', icon: ViewGridIcon, current: false },
+  { name: 'Keywords', href: '/admin/keywords', icon: Squares2X2Icon, current: false },
   { name: 'Settings', href: '/admin/settings', icon: CogIcon, current: false },
 ];
 
@@ -41,7 +41,7 @@ export default function Sidebar() {
         <div className="flex-1 flex flex-col min-h-0 bg-white border-r border-gray-200">
           <div className="flex-1 flex flex-col pt-5 pb-4 overflow-y-auto">
             <div className="flex items-center flex-shrink-0 px-4">
-              <CloudDownloadIcon className="h-8 w-8 text-blue-600" />
+              <CloudArrowDownIcon className="h-8 w-8 text-blue-600" />
               <span className="ml-3 text-xl font-bold text-gray-900">Job Scraper Pro</span>
             </div>
             <nav className="mt-8 flex-1 px-2 space-y-1">
