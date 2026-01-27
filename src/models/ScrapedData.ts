@@ -1,6 +1,105 @@
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 
-const ScrapedDataSchema = new mongoose.Schema(
+// Define the interface for document
+export interface IScrapedData extends mongoose.Document {
+  url: string;
+  job_title?: string;
+  company_name?: string;
+  company_url?: string;
+  location?: string;
+  job_type?: string;
+  work_from?: string;
+  posted_date?: Date;
+  notice_period?: string;
+  salary?: string;
+  salary_min?: number;
+  salary_max?: number;
+  salary_currency?: string;
+  min_experience?: number;
+  max_experience?: number;
+  experience?: string;
+  description?: string;
+  responsibilities?: string;
+  requirements?: string;
+  skills?: string[];
+  skill_text?: string;
+  benefits?: string[];
+  benefits_text?: string;
+  applied_number?: number;
+  application_count?: number;
+  application_deadline?: Date;
+  hr_name?: string;
+  hr_linkedin?: string;
+  hr_email?: string;
+  hr_phone?: string;
+  contact_number?: string;
+  tl_name?: string;
+  tl_position?: string;
+  review?: string;
+  company_rating?: number;
+  review_count?: number;
+  past_applicants_opinion?: string;
+  success_rate?: number;
+  interview_experience?: string;
+  source?: string;
+  source_website?: string;
+  job_id?: string;
+  reference_id?: string;
+  status?: 'pending' | 'completed' | 'failed' | 'expired' | 'closed' | 'active';
+  is_active?: boolean;
+  is_verified?: boolean;
+  is_remote?: boolean;
+  scraped_at?: Date;
+  last_updated?: Date;
+  scrape_duration?: number;
+  category?: string;
+  industry?: string;
+  department?: string;
+  education_required?: string;
+  visa_sponsorship?: boolean;
+  relocation_assistance?: boolean;
+  views_count?: number;
+  saves_count?: number;
+  shares_count?: number;
+  raw_html?: string;
+  metadata?: Record<string, unknown>;
+  additional_info?: Record<string, unknown>;
+  company_logo?: string;
+  images?: string[];
+  
+  // Virtual fields
+  salary_range?: string;
+  experience_range?: string;
+  days_since_posted?: number | null;
+  
+  // Methods
+  markAsExpired(): Promise<IScrapedData>;
+  incrementApplicationCount(): Promise<IScrapedData>;
+}
+
+// Define the interface for static methods
+interface IScrapedDataModel extends mongoose.Model<IScrapedData> {
+  findActiveJobs(): Promise<IScrapedData[]>;
+  searchJobs(query: string, filters?: JobSearchFilters): Promise<IScrapedData[]>;
+}
+
+// Define filter interface for search
+interface JobSearchFilters {
+  location?: string;
+  job_type?: string;
+  category?: string;
+  industry?: string;
+  min_salary?: number;
+  max_salary?: number;
+  min_experience?: number;
+  max_experience?: number;
+  is_remote?: boolean;
+  visa_sponsorship?: boolean;
+  company_name?: string;
+  posted_after?: Date;
+}
+
+const ScrapedDataSchema = new mongoose.Schema<IScrapedData, IScrapedDataModel>(
   {
     url: {
       type: String,
@@ -310,71 +409,123 @@ ScrapedDataSchema.index({
 });
 
 // Virtual fields
-ScrapedDataSchema.virtual('salary_range').get(function() {
+ScrapedDataSchema.virtual('salary_range').get(function(this: IScrapedData) {
   if (this.salary_min && this.salary_max) {
-    return `${this.salary_min} - ${this.salary_max} ${this.salary_currency}`;
+    return `${this.salary_min} - ${this.salary_max} ${this.salary_currency || 'USD'}`;
   }
   return this.salary || 'Not specified';
 });
 
-ScrapedDataSchema.virtual('experience_range').get(function() {
+ScrapedDataSchema.virtual('experience_range').get(function(this: IScrapedData) {
   if (this.min_experience && this.max_experience) {
     return `${this.min_experience} - ${this.max_experience} years`;
   }
   return this.experience || 'Not specified';
 });
 
-ScrapedDataSchema.virtual('days_since_posted').get(function() {
+ScrapedDataSchema.virtual('days_since_posted').get(function(this: IScrapedData) {
   if (!this.posted_date) return null;
   const posted = new Date(this.posted_date);
   const now = new Date();
-  const diffTime = Math.abs(now - posted);
+  const diffTime = Math.abs(now.getTime() - posted.getTime());
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 });
 
-// FIXED: Remove the broken pre-save middleware
-// Instead, use default values in schema or handle in application logic
-
 // Methods
-ScrapedDataSchema.methods.markAsExpired = async function() {
+ScrapedDataSchema.methods.markAsExpired = async function(this: IScrapedData): Promise<IScrapedData> {
   this.status = 'expired';
   this.is_active = false;
   this.last_updated = new Date();
   return this.save();
 };
 
-ScrapedDataSchema.methods.incrementApplicationCount = async function() {
-  this.application_count += 1;
+ScrapedDataSchema.methods.incrementApplicationCount = async function(this: IScrapedData): Promise<IScrapedData> {
+  this.application_count = (this.application_count || 0) + 1;
   this.last_updated = new Date();
   return this.save();
 };
 
 // Static methods
-ScrapedDataSchema.statics.findActiveJobs = function() {
+ScrapedDataSchema.statics.findActiveJobs = function(): Promise<IScrapedData[]> {
   return this.find({ is_active: true, status: 'completed' });
 };
 
-ScrapedDataSchema.statics.searchJobs = function(query: string, filters: any = {}) {
-  const searchQuery: any = {
-    ...filters,
+ScrapedDataSchema.statics.searchJobs = function(query: string, filters: JobSearchFilters = {}): Promise<IScrapedData[]> {
+  // Create search query object
+  const searchQuery: Record<string, unknown> = {
     is_active: true,
     status: 'completed',
   };
+
+  // Apply filters
+  if (filters.location) {
+    searchQuery.location = { $regex: filters.location, $options: 'i' };
+  }
+  if (filters.job_type) {
+    searchQuery.job_type = filters.job_type;
+  }
+  if (filters.category) {
+    searchQuery.category = filters.category;
+  }
+  if (filters.industry) {
+    searchQuery.industry = filters.industry;
+  }
+  if (filters.is_remote !== undefined) {
+    searchQuery.is_remote = filters.is_remote;
+  }
+  if (filters.visa_sponsorship !== undefined) {
+    searchQuery.visa_sponsorship = filters.visa_sponsorship;
+  }
+  if (filters.company_name) {
+    searchQuery.company_name = { $regex: filters.company_name, $options: 'i' };
+  }
+  if (filters.posted_after) {
+    searchQuery.posted_date = { $gte: filters.posted_after };
+  }
   
+  // Salary range filter
+  if (filters.min_salary || filters.max_salary) {
+    const salaryFilter: Record<string, unknown> = {};
+    if (filters.min_salary) {
+      salaryFilter.salary_min = { $gte: filters.min_salary };
+    }
+    if (filters.max_salary) {
+      salaryFilter.salary_max = { $lte: filters.max_salary };
+    }
+    searchQuery.$or = [
+      salaryFilter,
+      { salary_min: null, salary_max: null }
+    ];
+  }
+  
+  // Experience range filter
+  if (filters.min_experience || filters.max_experience) {
+    const experienceFilter: Record<string, unknown> = {};
+    if (filters.min_experience) {
+      experienceFilter.max_experience = { $gte: filters.min_experience };
+    }
+    if (filters.max_experience) {
+      experienceFilter.min_experience = { $lte: filters.max_experience };
+    }
+    searchQuery.$or = [
+      experienceFilter,
+      { min_experience: null, max_experience: null }
+    ];
+  }
+  
+  // Text search
   if (query) {
     searchQuery.$text = { $search: query };
   }
   
+  // In Mongoose 9+, just pass the query object directly
   return this.find(searchQuery)
     .sort({ posted_date: -1 })
     .select('-raw_html -metadata -additional_info');
 };
 
-// Type definitions for static methods
-interface ScrapedDataModel extends mongoose.Model<any> {
-  findActiveJobs(): Promise<any[]>;
-  searchJobs(query: string, filters?: any): Promise<any[]>;
-}
+// Create and export the model
+const ScrapedData = mongoose.models.ScrapedData as IScrapedDataModel || 
+  mongoose.model<IScrapedData, IScrapedDataModel>('ScrapedData', ScrapedDataSchema);
 
-export default mongoose.models.ScrapedData as ScrapedDataModel || 
-  mongoose.model<ScrapedDataModel>('ScrapedData', ScrapedDataSchema);
+export default ScrapedData;
