@@ -30,7 +30,8 @@ declare global {
   var mongooseGlobal: MongooseCache | undefined;
 }
 
-let cached: MongooseCache = global.mongooseGlobal || { conn: null, promise: null };
+// Use const since it's never reassigned
+const cached: MongooseCache = global.mongooseGlobal || { conn: null, promise: null };
 
 if (!global.mongooseGlobal) {
   global.mongooseGlobal = cached;
@@ -43,7 +44,7 @@ async function dbConnect(): Promise<typeof mongoose> {
   }
 
   if (!cached.promise) {
-    const opts = {
+    const opts: mongoose.ConnectOptions = {
       bufferCommands: false,
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 10000, // Increased timeout for Atlas
@@ -58,11 +59,47 @@ async function dbConnect(): Promise<typeof mongoose> {
         console.log('✅ MongoDB Atlas connected successfully!');
         console.log(`📊 Database: ${mongooseInstance.connection.db?.databaseName}`);
         console.log(`📈 Host: ${mongooseInstance.connection.host}`);
-        console.log(`🏷️ App Name: ${mongooseInstance.connection.client?.s?.options?.appName}`);
+        
+        // Safely access the appName with proper type checking
+        try {
+          // Create a type-safe interface for the internal connection object
+          interface InternalConnection {
+            client?: {
+              s?: {
+                options?: {
+                  appName?: string;
+                };
+              };
+            };
+          }
+          
+          const conn = mongooseInstance.connection as unknown as InternalConnection;
+          if (conn.client?.s?.options?.appName) {
+            console.log(`🏷️ App Name: ${conn.client.s.options.appName}`);
+          } else {
+            console.log('🏷️ App Name: (not available)');
+          }
+        } catch {
+          // Silently ignore if we can't access appName
+          console.log('🏷️ App Name: (not available)');
+        }
+        
         return mongooseInstance;
       })
-      .catch((error) => {
-        console.error('❌ MongoDB Atlas connection failed:', error.message);
+      .catch((error: unknown) => {
+        // Create a helper function to get error message safely
+        const getErrorMessage = (err: unknown): string => {
+          if (err instanceof Error) {
+            return err.message;
+          } else if (typeof err === 'string') {
+            return err;
+          } else {
+            return 'Unknown error occurred';
+          }
+        };
+        
+        const errorMessage = getErrorMessage(error);
+        console.error('❌ MongoDB Atlas connection failed:', errorMessage);
         
         console.log('\n🔧 TROUBLESHOOTING MONGODB ATLAS:');
         console.log('1. Check if your IP is whitelisted:');
