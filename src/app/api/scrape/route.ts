@@ -9,7 +9,6 @@ import {
 } from '@/utils/scraper';
 
 // Helper function to retry database operations
-// Helper function to retry database operations
 async function retryDbOperation<T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
@@ -23,7 +22,6 @@ async function retryDbOperation<T>(
     } catch (error) {
       lastError = error;
       
-      // Type-safe error handling
       if (error instanceof Error) {
         console.log(`⚠️ Database operation failed (attempt ${i + 1}/${maxRetries}):`, error.message);
       } else {
@@ -32,12 +30,11 @@ async function retryDbOperation<T>(
       
       if (i < maxRetries - 1) {
         console.log(`⏳ Retrying in ${delayMs}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs * (i + 1))); // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, delayMs * (i + 1)));
       }
     }
   }
   
-  // Type-safe error throwing
   if (lastError instanceof Error) {
     throw lastError;
   } else {
@@ -45,10 +42,28 @@ async function retryDbOperation<T>(
   }
 }
 
+// Helper to check timeout
+function checkTimeout(startTime: number, timeoutMs: number = 250000): boolean {
+  const elapsed = Date.now() - startTime;
+  const timeLeft = timeoutMs - elapsed;
+  
+  if (timeLeft < 30000) { // 30 seconds left
+    console.log(`⏰ Warning: ${Math.round(timeLeft / 1000)} seconds remaining before timeout`);
+  }
+  
+  return elapsed >= timeoutMs;
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
+  const MAX_EXECUTION_TIME = 250000; // 4 minutes 10 seconds (leaving buffer)
   
   try {
+    // Check timeout early
+    if (checkTimeout(startTime, MAX_EXECUTION_TIME)) {
+      throw new Error('Execution timeout check failed at start');
+    }
+    
     // Parse JSON body
     let body;
     try {
@@ -66,7 +81,7 @@ export async function POST(request: NextRequest) {
     console.log('🔗 Connecting to database...');
     await dbConnect();
     
-    const { url, category, tags, source, force } = body || {};
+    const { url, category, tags, source, maxJobs = 20 } = body || {};
     
     if (!url) {
       return NextResponse.json(
@@ -97,10 +112,18 @@ export async function POST(request: NextRequest) {
     
     if (isLinkedInSearch) {
       console.log('🔍 Detected LinkedIn search page, starting batch scraping...');
-      return await handleLinkedInSearch(url, category, tags, source);
+      return await handleLinkedInSearch(
+        url, 
+        category, 
+        tags, 
+        source,
+        maxJobs,
+        startTime,
+        MAX_EXECUTION_TIME
+      );
     } else {
       // Single job scraping
-      return await handleSingleJobScrape(url, category, tags, source, force);
+      return await handleSingleJobScrape(url, category, tags, source);
     }
 
   } catch (error) {
@@ -118,170 +141,29 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Handle LinkedIn search page scraping
-// async function handleLinkedInSearch(
-//   url: string, 
-//   category?: string, 
-//   tags?: string[], 
-//   source?: string
-// ) {
-//   const startTime = Date.now();
-  
-//   try {
-//     console.log('🔄 Starting LinkedIn search scraping...');
-    
-//     // Step 1: Scrape the search page for job listings
-//     const jobListings = await scrapeLinkedInSearch(url);
-    
-//     if (jobListings.length === 0) {
-//       return NextResponse.json({
-//         success: false,
-//         error: 'No job listings found on the search page',
-//         suggestion: 'Try a different search URL or check the page structure'
-//       }, { status: 404 });
-//     }
-    
-//     console.log(`📋 Found ${jobListings.length} job listings`);
-    
-//     // Step 2: Scrape each job detail
-//     const jobDetails = await batchScrapeJobDetails(jobListings);
-    
-//     console.log(`✅ Successfully processed ${jobDetails.length} job details`);
-    
-//     // Step 3: Save to database with retry logic
-//     const savedJobs = [];
-//     const failedJobs = [];
-    
-//     for (let i = 0; i < jobDetails.length; i++) {
-//       const detail = jobDetails[i];
-//       const listing = jobListings[i];
-      
-//       try {
-//         // Generate a unique job ID
-//         const jobId = detail.job_id || listing.job_id || `linkedin_${Date.now()}_${i}`;
-        
-//         // Check if job already exists with retry
-//         const existingJob = await retryDbOperation(async () => {
-//           return await ScrapedData.findOne({ 
-//             $or: [
-//               { url: listing.job_url },
-//               { job_id: jobId }
-//             ]
-//           });
-//         });
-        
-//         if (existingJob) {
-//           console.log(`ℹ️ Job already exists: ${detail.job_title}`);
-//           savedJobs.push({
-//             ...existingJob.toObject(),
-//             alreadyExists: true
-//           });
-//           continue;
-//         }
-        
-//         // Convert to database format
-//         const jobData = convertToJobScrapedData(detail, listing);
-        
-//         // Create job record - set last_updated manually instead of using middleware
-//         const jobRecord = new ScrapedData({
-//           ...jobData,
-//           category: category || 'General',
-//           tags: tags || [],
-//           source: source || 'linkedin_search',
-//           status: 'completed',
-//           is_active: true,
-//           scraped_at: new Date(),
-//           last_updated: new Date(), // Set manually here
-//           job_id: jobId,
-//         });
-        
-//         // Set default values for required fields
-//         if (!jobRecord.job_title) {
-//           jobRecord.job_title = listing.job_title || 'Unknown Position';
-//         }
-//         if (!jobRecord.company_name) {
-//           jobRecord.company_name = listing.company_name || 'Unknown Company';
-//         }
-//         if (!jobRecord.location) {
-//           jobRecord.location = listing.location || 'Location not specified';
-//         }
-        
-//         // Save with retry
-//         await retryDbOperation(async () => {
-//           await jobRecord.save();
-//         });
-        
-//         savedJobs.push({
-//           ...jobRecord.toObject(),
-//           saved: true
-//         });
-//         console.log(`💾 Saved: ${detail.job_title}`);
-        
-//       } catch (saveError) {
-//         console.error(`❌ Failed to save job ${detail.job_title}:`, saveError);
-//         failedJobs.push({
-//           job_title: detail.job_title,
-//           url: listing.job_url,
-//           error: saveError instanceof Error ? saveError.message : 'Unknown error'
-//         });
-//       }
-      
-//       // Small delay between saves
-//       if (i < jobDetails.length - 1) {
-//         await new Promise(resolve => setTimeout(resolve, 1000));
-//       }
-//     }
-    
-//     // Log results
-//     console.log('📊 Job listings found:', jobListings.length);
-//     console.log('📊 Job details processed:', jobDetails.length);
-//     console.log('📊 Jobs saved to database:', savedJobs.length);
-//     console.log('📊 Jobs failed to save:', failedJobs.length);
-    
-//     // Return success even if some jobs failed
-//     return NextResponse.json({
-//       success: true,
-//       message: 'LinkedIn search scraping completed',
-//       summary: {
-//         listingsFound: jobListings.length,
-//         detailsProcessed: jobDetails.length,
-//         jobsSaved: savedJobs.length,
-//         jobsFailed: failedJobs.length,
-//         alreadyExists: savedJobs.filter(j => (j as any).alreadyExists).length,
-//         executionTime: `${Date.now() - startTime}ms`
-//       },
-//       data: {
-//         listings: jobListings,
-//         savedJobs: savedJobs,
-//         failedJobs: failedJobs
-//       }
-//     }, { status: 200 });
-    
-//   } catch (error) {
-//     console.error('❌ LinkedIn search scraping failed:', error);
-    
-//     return NextResponse.json({
-//       success: false,
-//       error: 'Failed to scrape LinkedIn search',
-//       details: error instanceof Error ? error.message : 'Unknown error',
-//       executionTime: `${Date.now() - startTime}ms`
-//     }, { status: 500 });
-//   }
-// }
-
+// Handle LinkedIn search page scraping with timeout management
 async function handleLinkedInSearch(
   url: string, 
   category?: string, 
   tags?: string[], 
-  source?: string
+  source?: string,
+  maxJobs: number = 20,
+  startTime: number,
+  timeoutMs: number = 250000
 ) {
-  const startTime = Date.now();
+  const operationStartTime = Date.now();
   
   try {
     console.log('🔄 Starting LinkedIn search scraping...');
+    console.log(`⏱️ Timeout set to: ${timeoutMs / 1000} seconds`);
+    console.log(`📦 Max jobs to process: ${maxJobs}`);
     
-    // Step 1: Scrape the search page for job listings (get up to 50)
+    // Step 1: Scrape the search page for job listings
     const jobListings = await scrapeLinkedInSearch(url);
+    
+    if (checkTimeout(startTime, timeoutMs)) {
+      throw new Error('Timeout after scraping search page');
+    }
     
     if (jobListings.length === 0) {
       return NextResponse.json({
@@ -293,25 +175,133 @@ async function handleLinkedInSearch(
     
     console.log(`📋 Found ${jobListings.length} job listings`);
     
-    // Step 2: Scrape each job detail (limit to 50 for performance)
-    const maxJobsToScrape = Math.min(jobListings.length, 50);
-    const jobsToScrape = jobListings.slice(0, maxJobsToScrape);
-    const jobDetails = await batchScrapeJobDetails(jobsToScrape, maxJobsToScrape);
+    // Step 2: Limit jobs based on timeout considerations
+    const safeMaxJobs = Math.min(jobListings.length, maxJobs, 30); // Max 30 jobs for safety
+    const jobsToProcess = jobListings.slice(0, safeMaxJobs);
+    
+    console.log(`⚡ Processing ${safeMaxJobs} jobs (timeout-safe)`);
+    
+    // Step 3: Scrape job details with concurrency control
+    const jobDetails = await batchScrapeJobDetails(jobsToProcess, safeMaxJobs);
+    
+    if (checkTimeout(startTime, timeoutMs)) {
+      throw new Error('Timeout after scraping job details');
+    }
     
     console.log(`✅ Successfully processed ${jobDetails.length} job details`);
     
-    // Step 3: Save to database with duplicate checking
-    const savedJobs = [];
-    const failedJobs = [];
-    const skippedJobs = [];
+    // Step 4: Save to database with batch operations and timeout checks
+    const results = await saveJobsWithTimeout(
+      jobDetails,
+      jobsToProcess,
+      category,
+      tags,
+      source,
+      startTime,
+      timeoutMs
+    );
     
-    for (let i = 0; i < jobDetails.length; i++) {
-      const detail = jobDetails[i];
-      const listing = jobsToScrape[i];
+    const { savedJobs, skippedJobs, failedJobs } = results;
+    
+    // Log results
+    console.log('\n📊 SCRAPING SUMMARY:');
+    console.log('========================');
+    console.log(`Total listings found: ${jobListings.length}`);
+    console.log(`Jobs attempted: ${safeMaxJobs}`);
+    console.log(`Jobs processed: ${jobDetails.length}`);
+    console.log(`Jobs saved: ${savedJobs.length}`);
+    console.log(`Jobs skipped (duplicates): ${skippedJobs.length}`);
+    console.log(`Jobs failed: ${failedJobs.length}`);
+    console.log(`Total execution time: ${Date.now() - startTime}ms`);
+    
+    // Return comprehensive response
+    return NextResponse.json({
+      success: true,
+      message: 'LinkedIn search scraping completed',
+      summary: {
+        totalListingsFound: jobListings.length,
+        jobsAttempted: safeMaxJobs,
+        jobsProcessed: jobDetails.length,
+        jobsSaved: savedJobs.length,
+        jobsSkipped: skippedJobs.length,
+        jobsFailed: failedJobs.length,
+        timeoutSafe: true,
+        executionTime: `${Date.now() - startTime}ms`
+      },
+      data: {
+        savedJobs: savedJobs.slice(0, 5), // Return first 5 for preview
+        skippedJobs: skippedJobs.slice(0, 5),
+        failedJobs: failedJobs.slice(0, 5),
+        statistics: {
+          totalSaved: savedJobs.length,
+          totalSkipped: skippedJobs.length,
+          totalFailed: failedJobs.length
+        }
+      }
+    }, { status: 200 });
+    
+  } catch (error) {
+    console.error('❌ LinkedIn search scraping failed:', error);
+    
+    const timeUsed = Date.now() - startTime;
+    
+    return NextResponse.json({
+      success: false,
+      error: timeUsed >= timeoutMs ? 'Operation timed out' : 'Failed to scrape LinkedIn search',
+      details: error instanceof Error ? error.message : 'Unknown error',
+      timeUsed: `${timeUsed}ms`,
+      timeout: timeUsed >= timeoutMs
+    }, { 
+      status: timeUsed >= timeoutMs ? 408 : 500 // 408 for timeout
+    });
+  }
+}
+
+// Optimized function to save jobs with timeout management
+async function saveJobsWithTimeout(
+  jobDetails: any[],
+  jobListings: LinkedInJobListing[],
+  category?: string,
+  tags?: string[],
+  source?: string,
+  startTime: number,
+  timeoutMs: number
+) {
+  const savedJobs = [];
+  const skippedJobs = [];
+  const failedJobs = [];
+  
+  // Process jobs in batches to avoid timeout
+  const BATCH_SIZE = 5;
+  const totalBatches = Math.ceil(jobDetails.length / BATCH_SIZE);
+  
+  for (let batch = 0; batch < totalBatches; batch++) {
+    // Check timeout before starting each batch
+    if (checkTimeout(startTime, timeoutMs)) {
+      console.log(`⏰ Timeout reached, stopping after batch ${batch}`);
+      break;
+    }
+    
+    const batchStart = batch * BATCH_SIZE;
+    const batchEnd = Math.min((batch + 1) * BATCH_SIZE, jobDetails.length);
+    const currentBatch = jobDetails.slice(batchStart, batchEnd);
+    const currentListings = jobListings.slice(batchStart, batchEnd);
+    
+    console.log(`🔄 Processing batch ${batch + 1}/${totalBatches} (jobs ${batchStart + 1}-${batchEnd})`);
+    
+    // Process jobs in parallel within the batch
+    const batchPromises = currentBatch.map(async (detail, index) => {
+      const listing = currentListings[index];
+      const jobIndex = batchStart + index;
       
       try {
+        // Check timeout for individual job
+        if (checkTimeout(startTime, timeoutMs - 10000)) { // 10 second buffer
+          throw new Error('Timeout approaching, skipping remaining operations');
+        }
+        
         // Generate unique job ID
-        const jobId = detail.job_id || listing.job_id || `linkedin_${Date.now()}_${i}`;
+        const jobId = detail.job_id || listing.job_id || `linkedin_${Date.now()}_${jobIndex}`;
         
         // Check if job already exists
         const existingJob = await ScrapedData.findOne({ 
@@ -324,12 +314,14 @@ async function handleLinkedInSearch(
         
         if (existingJob) {
           console.log(`⏭️ Skipping existing job: ${detail.job_title}`);
-          skippedJobs.push({
-            job_title: detail.job_title,
-            url: listing.job_url,
-            reason: 'Already exists in database'
-          });
-          continue;
+          return {
+            type: 'skipped' as const,
+            data: {
+              job_title: detail.job_title,
+              url: listing.job_url,
+              reason: 'Already exists in database'
+            }
+          };
         }
         
         // Convert to database format
@@ -349,74 +341,55 @@ async function handleLinkedInSearch(
         });
         
         await jobRecord.save();
-        savedJobs.push({
-          ...jobRecord.toObject(),
-          saved: true
-        });
         console.log(`💾 Saved: ${detail.job_title}`);
         
+        return {
+          type: 'saved' as const,
+          data: {
+            ...jobRecord.toObject(),
+            saved: true
+          }
+        };
+        
       } catch (saveError) {
-        console.error(`❌ Failed to save job:`, saveError);
-        failedJobs.push({
-          job_title: detail.job_title,
-          url: listing.job_url,
-          error: saveError instanceof Error ? saveError.message : 'Unknown error'
-        });
+        console.error(`❌ Failed to save job ${detail.job_title}:`, saveError);
+        return {
+          type: 'failed' as const,
+          data: {
+            job_title: detail.job_title,
+            url: listing.job_url,
+            error: saveError instanceof Error ? saveError.message : 'Unknown error'
+          }
+        };
       }
-      
-      // Small delay between saves
-      if (i < jobDetails.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 300));
+    });
+    
+    // Wait for batch to complete
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Categorize results
+    for (const result of batchResults) {
+      if (result.type === 'saved') {
+        savedJobs.push(result.data);
+      } else if (result.type === 'skipped') {
+        skippedJobs.push(result.data);
+      } else if (result.type === 'failed') {
+        failedJobs.push(result.data);
       }
     }
     
-    // Log results
-    console.log('\n📊 SCRAPING SUMMARY:');
-    console.log('========================');
-    console.log(`Listings found: ${jobListings.length}`);
-    console.log(`Jobs processed: ${jobDetails.length}`);
-    console.log(`Jobs saved: ${savedJobs.length}`);
-    console.log(`Jobs skipped (duplicates): ${skippedJobs.length}`);
-    console.log(`Jobs failed: ${failedJobs.length}`);
-    console.log(`Execution time: ${Date.now() - startTime}ms`);
-    
-    // Return comprehensive response
-    return NextResponse.json({
-      success: true,
-      message: 'LinkedIn search scraping completed',
-      summary: {
-        totalListingsFound: jobListings.length,
-        jobsProcessed: jobDetails.length,
-        jobsSaved: savedJobs.length,
-        jobsSkipped: skippedJobs.length,
-        jobsFailed: failedJobs.length,
-        executionTime: `${Date.now() - startTime}ms`
-      },
-      data: {
-        savedJobs: savedJobs.slice(0, 10), // Return first 10 for preview
-        skippedJobs: skippedJobs.slice(0, 10),
-        failedJobs: failedJobs.slice(0, 10),
-        statistics: {
-          totalSaved: savedJobs.length,
-          totalSkipped: skippedJobs.length,
-          totalFailed: failedJobs.length
-        }
-      }
-    }, { status: 200 });
-    
-  } catch (error) {
-    console.error('❌ LinkedIn search scraping failed:', error);
-    
-    return NextResponse.json({
-      success: false,
-      error: 'Failed to scrape LinkedIn search',
-      details: error instanceof Error ? error.message : 'Unknown error',
-      executionTime: `${Date.now() - startTime}ms`
-    }, { status: 500 });
+    // Add delay between batches if not the last batch
+    if (batch < totalBatches - 1) {
+      const delay = 1000; // 1 second between batches
+      console.log(`⏳ Waiting ${delay}ms before next batch...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
+  
+  return { savedJobs, skippedJobs, failedJobs };
 }
 
-// Handle single job scraping (simplified)
+// Handle single job scraping (optimized)
 async function handleSingleJobScrape(
   url: string, 
   category?: string, 
@@ -424,6 +397,8 @@ async function handleSingleJobScrape(
   source?: string,
   force?: boolean
 ) {
+  const startTime = Date.now();
+  
   try {
     // Check if job already exists
     const existingJob = await retryDbOperation(async () => {
@@ -435,7 +410,8 @@ async function handleSingleJobScrape(
         success: true,
         message: 'Job already exists in database',
         data: existingJob,
-        alreadyExists: true
+        alreadyExists: true,
+        executionTime: `${Date.now() - startTime}ms`
       }, { status: 200 });
     }
 
@@ -450,7 +426,7 @@ async function handleSingleJobScrape(
       status: 'completed',
       is_active: true,
       scraped_at: new Date(),
-      last_updated: new Date(), // Set manually
+      last_updated: new Date(),
       job_id: `linkedin_${Date.now()}`,
       location: 'Location not specified',
       description: 'Job description will be updated when scraping is implemented.',
@@ -463,7 +439,8 @@ async function handleSingleJobScrape(
     return NextResponse.json({
       success: true,
       message: 'Job saved successfully',
-      data: jobRecord.toObject()
+      data: jobRecord.toObject(),
+      executionTime: `${Date.now() - startTime}ms`
     }, { status: 200 });
 
   } catch (error) {
@@ -473,7 +450,8 @@ async function handleSingleJobScrape(
       { 
         success: false,
         error: 'Internal server error in single job scrape',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
+        executionTime: `${Date.now() - startTime}ms`
       },
       { status: 500 }
     );
@@ -482,6 +460,7 @@ async function handleSingleJobScrape(
 
 // GET endpoint for testing
 export async function GET(request: NextRequest) {
+  const startTime = Date.now();
   const searchParams = request.nextUrl.searchParams;
   const test = searchParams.get('test');
   
@@ -491,13 +470,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         success: true,
         message: 'Database connection successful',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        executionTime: `${Date.now() - startTime}ms`
       }, { status: 200 });
     } catch (error) {
       return NextResponse.json({
         success: false,
         error: 'Database connection failed',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
+        executionTime: `${Date.now() - startTime}ms`
       }, { status: 500 });
     }
   }
@@ -508,6 +489,8 @@ export async function GET(request: NextRequest) {
     endpoints: {
       POST: 'Scrape a job or search page',
       'GET ?test=connection': 'Test database connection'
-    }
+    },
+    timeout: 'Max 300 seconds (5 minutes)',
+    executionTime: `${Date.now() - startTime}ms`
   }, { status: 200 });
 }
