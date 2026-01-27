@@ -8,20 +8,6 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  // Remove 'swcMinify' as it's no longer needed
-  // Fix images configuration warning
-  images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '**', // Allows all HTTPS domains
-      },
-    ],
-  },
-  // Add this to set NODE_ENV properly
-  env: {
-    NODE_ENV: 'production',
-  },
-};
+}
 
-module.exports = nextConfig;
+module.exports = nextConfig
