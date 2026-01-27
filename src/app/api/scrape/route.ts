@@ -9,19 +9,26 @@ import {
 } from '@/utils/scraper';
 
 // Helper function to retry database operations
+// Helper function to retry database operations
 async function retryDbOperation<T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
   delayMs: number = 1000
 ): Promise<T> {
-  let lastError: any;
+  let lastError: unknown;
   
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await operation();
     } catch (error) {
       lastError = error;
-      console.log(`⚠️ Database operation failed (attempt ${i + 1}/${maxRetries}):`, error.message);
+      
+      // Type-safe error handling
+      if (error instanceof Error) {
+        console.log(`⚠️ Database operation failed (attempt ${i + 1}/${maxRetries}):`, error.message);
+      } else {
+        console.log(`⚠️ Database operation failed (attempt ${i + 1}/${maxRetries}):`, String(error));
+      }
       
       if (i < maxRetries - 1) {
         console.log(`⏳ Retrying in ${delayMs}ms...`);
@@ -30,7 +37,12 @@ async function retryDbOperation<T>(
     }
   }
   
-  throw lastError;
+  // Type-safe error throwing
+  if (lastError instanceof Error) {
+    throw lastError;
+  } else {
+    throw new Error(String(lastError));
+  }
 }
 
 export async function POST(request: NextRequest) {
