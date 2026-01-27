@@ -33,6 +33,9 @@ if (!global.mongooseGlobal) {
 }
 
 async function dbConnect(): Promise<typeof mongoose> {
+  // Store MONGODB_URI in a local variable that TypeScript knows is defined
+  const mongoUri = MONGODB_URI;
+  
   if (cached.conn) {
     console.log('✅ Using cached MongoDB connection');
     return cached.conn;
@@ -49,7 +52,7 @@ async function dbConnect(): Promise<typeof mongoose> {
 
     console.log('🔗 Attempting to connect to MongoDB Atlas...');
     
-    cached.promise = mongoose.connect(MONGODB_URI, opts)
+    cached.promise = mongoose.connect(mongoUri, opts)
       .then((mongooseInstance) => {
         console.log('✅ MongoDB Atlas connected successfully!');
         console.log(`📊 Database: ${mongooseInstance.connection.db?.databaseName}`);
@@ -77,7 +80,7 @@ async function dbConnect(): Promise<typeof mongoose> {
         
         console.log('\n4. Connection string format:');
         console.log('   Expected: mongodb+srv://username:password@cluster.mongodb.net/dbname');
-        console.log('   Your URI starts with:', MONGODB_URI.substring(0, 30));
+        console.log('   Your URI starts with:', mongoUri.substring(0, 30));
         
         cached.promise = null;
         throw error;
