@@ -1,4 +1,6 @@
-// app/_not-found.tsx
+// src/app/_not-found.tsx
+// NO 'use client' directive for this one
+
 export default function NotFound() {
   return (
     <div style={{ 

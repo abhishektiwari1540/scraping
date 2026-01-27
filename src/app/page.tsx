@@ -1,9 +1,9 @@
-// app/page.tsx
+// src/app/page.tsx
 export default function Home() {
   return (
-    <div>
+    <div style={{ padding: '20px' }}>
       <h1>Job Scraper</h1>
-      <p>Welcome to the job scraping application</p>
+      <p>Application is working!</p>
     </div>
   );
 }

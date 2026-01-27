@@ -1,5 +1,5 @@
-// app/global-error.tsx
-'use client';
+// src/app/_global-error.tsx
+'use client'; // ← CRITICAL: Must be first line
 
 export default function GlobalError({
   error,
@@ -11,8 +11,23 @@ export default function GlobalError({
   return (
     <html>
       <body>
-        <h2>Something went wrong!</h2>
-        <button onClick={() => reset()}>Try again</button>
+        <div style={{ padding: '20px', textAlign: 'center' }}>
+          <h1>Something went wrong!</h1>
+          <p>{error.message}</p>
+          <button 
+            onClick={() => reset()}
+            style={{ 
+              padding: '10px 20px', 
+              background: '#0070f3', 
+              color: 'white', 
+              border: 'none', 
+              borderRadius: '5px',
+              cursor: 'pointer'
+            }}
+          >
+            Try again
+          </button>
+        </div>
       </body>
     </html>
   );
