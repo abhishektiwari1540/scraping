@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import ScrapedData from '@/models/ScrapedData';
-import PipedreamScheduler, { TECH_KEYWORDS } from '@/utils/pipedreamScheduler';
 import { 
   scrapeLinkedInSearch, 
   batchScrapeJobDetails, 
@@ -168,7 +167,7 @@ async function handleLinkedInSearch(
   category?: string, 
   tags?: string[], 
   source?: string,
-  maxJobs: number = 10, // Changed default from 20 to 10
+  maxJobs: number = 10,
   startTime: number,
   timeoutMs: number = 250000
 ) {
@@ -219,7 +218,7 @@ async function handleLinkedInSearch(
     console.log(`🆕 Found ${uniqueJobListings.length} new jobs, ${duplicateJobs.length} duplicates`);
     
     // Step 3: Limit jobs based on timeout considerations and requested count
-    const safeMaxJobs = Math.min(uniqueJobListings.length, maxJobs, 30); // Max 30 jobs for safety
+    const safeMaxJobs = Math.min(uniqueJobListings.length, maxJobs, 30);
     const jobsToProcess = uniqueJobListings.slice(0, safeMaxJobs);
     
     console.log(`⚡ Processing ${safeMaxJobs} new jobs (timeout-safe)`);
@@ -279,7 +278,7 @@ async function handleLinkedInSearch(
         executionTime: `${Date.now() - startTime}ms`
       },
       data: {
-        savedJobs: savedJobs.slice(0, 5), // Return first 5 for preview
+        savedJobs: savedJobs.slice(0, 5),
         skippedJobs: {
           scrapePhase: duplicateJobs.slice(0, 5).map(job => ({
             job_title: job.job_title,
@@ -309,7 +308,7 @@ async function handleLinkedInSearch(
       timeUsed: `${timeUsed}ms`,
       timeout: timeUsed >= timeoutMs
     }, { 
-      status: timeUsed >= timeoutMs ? 408 : 500 // 408 for timeout
+      status: timeUsed >= timeoutMs ? 408 : 500
     });
   }
 }
@@ -328,12 +327,10 @@ async function saveJobsWithTimeout(
   const skippedJobs = [];
   const failedJobs = [];
   
-  // Process jobs in batches to avoid timeout
   const BATCH_SIZE = 5;
   const totalBatches = Math.ceil(jobDetails.length / BATCH_SIZE);
   
   for (let batch = 0; batch < totalBatches; batch++) {
-    // Check timeout before starting each batch
     if (checkTimeout(startTime, timeoutMs)) {
       console.log(`⏰ Timeout reached, stopping after batch ${batch}`);
       break;
@@ -346,21 +343,17 @@ async function saveJobsWithTimeout(
     
     console.log(`🔄 Processing batch ${batch + 1}/${totalBatches} (jobs ${batchStart + 1}-${batchEnd})`);
     
-    // Process jobs in parallel within the batch
     const batchPromises = currentBatch.map(async (detail, index) => {
       const listing = currentListings[index];
       const jobIndex = batchStart + index;
       
       try {
-        // Check timeout for individual job
-        if (checkTimeout(startTime, timeoutMs - 10000)) { // 10 second buffer
+        if (checkTimeout(startTime, timeoutMs - 10000)) {
           throw new Error('Timeout approaching, skipping remaining operations');
         }
         
-        // Generate unique job ID
         const jobId = detail.job_id || listing.job_id || `linkedin_${Date.now()}_${jobIndex}`;
         
-        // Check if job already exists (double-check)
         const existingJob = await ScrapedData.findOne({ 
           $or: [
             { url: listing.job_url },
@@ -381,10 +374,8 @@ async function saveJobsWithTimeout(
           };
         }
         
-        // Convert to database format
         const jobData = convertToJobScrapedData(detail, listing);
         
-        // Create job record
         const jobRecord = new ScrapedData({
           ...jobData,
           category: category || 'General',
@@ -421,10 +412,8 @@ async function saveJobsWithTimeout(
       }
     });
     
-    // Wait for batch to complete
     const batchResults = await Promise.all(batchPromises);
     
-    // Categorize results
     for (const result of batchResults) {
       if (result.type === 'saved') {
         savedJobs.push(result.data);
@@ -435,9 +424,8 @@ async function saveJobsWithTimeout(
       }
     }
     
-    // Add delay between batches if not the last batch
     if (batch < totalBatches - 1) {
-      const delay = 1000; // 1 second between batches
+      const delay = 1000;
       console.log(`⏳ Waiting ${delay}ms before next batch...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
@@ -457,7 +445,6 @@ async function handleSingleJobScrape(
   const startTime = Date.now();
   
   try {
-    // Check if job already exists
     const existingJob = await retryDbOperation(async () => {
       return await ScrapedData.findOne({ url });
     });
@@ -472,7 +459,6 @@ async function handleSingleJobScrape(
       }, { status: 200 });
     }
 
-    // Create job record
     const jobRecord = new ScrapedData({
       url,
       job_title: 'Job from LinkedIn',
@@ -515,212 +501,38 @@ async function handleSingleJobScrape(
   }
 }
 
-// GET endpoint for testing
+// GET endpoint to fetch scraped data from database
 export async function GET(request: NextRequest) {
-  const startTime = Date.now();
-  const searchParams = request.nextUrl.searchParams;
-  const action = searchParams.get('action');
-  const test = searchParams.get('test');
-  
-  const scheduler = PipedreamScheduler.getInstance();
-  
-  switch (action) {
-    case 'start-overnight':
-      return await handleStartOvernight(scheduler);
-      
-    case 'status':
-      return await handleGetStatus(scheduler);
-      
-    case 'stop':
-      return await handleStopScraping(scheduler);
-      
-    case 'results':
-      return await handleGetResults(scheduler);
-      
-    case 'queue':
-      return await handleGetQueue(scheduler);
-      
-    case 'keywords':
-      return await handleGetKeywords();
-      
-    case 'test-pipedream':
-      return await handleTestPipedream();
-  }
-  
-  if (test === 'connection') {
-    try {
-      await dbConnect();
-      return NextResponse.json({
-        success: true,
-        message: 'Database connection successful',
-        timestamp: new Date().toISOString(),
-        executionTime: `${Date.now() - startTime}ms`
-      }, { status: 200 });
-    } catch (error) {
-      return NextResponse.json({
-        success: false,
-        error: 'Database connection failed',
-        details: error instanceof Error ? error.message : 'Unknown error',
-        executionTime: `${Date.now() - startTime}ms`
-      }, { status: 500 });
-    }
-  }
-  
-  return NextResponse.json({
-    success: true,
-    message: 'LinkedIn Scraper API',
-    endpoints: {
-      'POST /': 'Scrape LinkedIn jobs with body: {url, count?, maxJobs?, category?, tags?, source?}',
-      'GET ?action=start-overnight': 'Start overnight scraping',
-      'GET ?action=status': 'Get scraping status',
-      'GET ?action=stop': 'Stop scraping',
-      'GET ?action=results': 'Get results summary',
-      'GET ?action=queue': 'Get job queue',
-      'GET ?action=keywords': 'Get all keywords',
-      'GET ?action=test-pipedream': 'Test Pipedream webhook',
-      'GET ?test=connection': 'Test database connection'
-    },
-    default_behavior: 'Scrapes and saves 10 jobs by default',
-    parameters: {
-      url: 'Required: LinkedIn search URL',
-      count: 'Optional: Number of jobs to scrape and save (default: 10, max: 30)',
-      maxJobs: 'Optional: Alias for count',
-      category: 'Optional: Job category',
-      tags: 'Optional: Array of tags',
-      source: 'Optional: Source identifier'
-    },
-    pipedreamWebhook: 'https://eo3fx7vdzhapezn.m.pipedream.net'
-  });
-}
-
-async function handleStartOvernight(scheduler: any) {
   try {
-    // Start in background (non-blocking)
-    scheduler.startOvernightScraping().catch(console.error);
+    await dbConnect();
+    
+    const searchParams = request.nextUrl.searchParams;
+    const limit = parseInt(searchParams.get('limit') || '100');
+    
+    // Get all jobs from database
+    const jobs = await ScrapedData.find({ is_active: true })
+      .sort({ scraped_at: -1 }) // Newest first
+      .limit(limit)
+      .lean();
+    
+    // Get total count
+    const totalCount = await ScrapedData.countDocuments({ is_active: true });
     
     return NextResponse.json({
       success: true,
-      message: 'Overnight scraping started in background',
-      status: 'processing',
-      keywords: TECH_KEYWORDS.length,
-      location: 'Jaipur',
-      estimatedTime: `${Math.ceil(TECH_KEYWORDS.length * 15 / 60)} hours`,
-      pipedreamWebhook: 'https://eo3fx7vdzhapezn.m.pipedream.net',
-      monitor: 'Check /api/scrape?action=status for progress'
-    }, { status: 202 }); // 202 Accepted
+      message: 'Data retrieved successfully',
+      count: jobs.length,
+      total: totalCount,
+      data: jobs
+    }, { status: 200 });
     
   } catch (error) {
+    console.error('🚨 GET API Error:', error);
+    
     return NextResponse.json({
       success: false,
-      error: 'Failed to start scraping',
+      error: 'Failed to fetch data',
       details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
-  }
-}
-
-async function handleGetStatus(scheduler: any) {
-  const status = scheduler.getStatus();
-  
-  return NextResponse.json({
-    success: true,
-    timestamp: new Date().toISOString(),
-    scraping: status.isRunning,
-    progress: status.progress,
-    currentJob: `${status.currentJob}/${status.totalJobs}`,
-    currentKeyword: status.currentKeyword,
-    results: {
-      totalSaved: status.totalSaved,
-      totalFound: status.totalFound,
-      recent: status.results
-    },
-    estimatedTimeRemaining: status.estimatedTimeRemaining,
-    pipedream: 'Updates sent to https://eo3fx7vdzhapezn.m.pipedream.net'
-  });
-}
-
-async function handleStopScraping(scheduler: any) {
-  scheduler.stopScraping();
-  
-  return NextResponse.json({
-    success: true,
-    message: 'Scraping stopped',
-    timestamp: new Date().toISOString()
-  });
-}
-
-async function handleGetResults(scheduler: any) {
-  const summary = scheduler.getResultsSummary();
-  
-  return NextResponse.json({
-    success: true,
-    summary: summary,
-    timestamp: new Date().toISOString()
-  });
-}
-
-async function handleGetQueue(scheduler: any) {
-  const queue = scheduler.getJobQueue();
-  
-  return NextResponse.json({
-    success: true,
-    totalJobs: queue.length,
-    completed: queue.filter(j => j.status === 'completed').length,
-    failed: queue.filter(j => j.status === 'failed').length,
-    pending: queue.filter(j => j.status === 'pending').length,
-    queue: queue.slice(0, 20) // First 20 jobs
-  });
-}
-
-async function handleGetKeywords() {
-  return NextResponse.json({
-    success: true,
-    totalKeywords: TECH_KEYWORDS.length,
-    keywords: TECH_KEYWORDS,
-    categories: {
-      frontend: TECH_KEYWORDS.filter(k => 
-        ['react', 'angular', 'vue', 'javascript', 'typescript', 'frontend', 'ui'].some(t => k.includes(t))
-      ),
-      backend: TECH_KEYWORDS.filter(k => 
-        ['node', 'python', 'java', 'php', '.net', 'backend', 'spring'].some(t => k.includes(t))
-      ),
-      fullstack: TECH_KEYWORDS.filter(k => 
-        ['full stack', 'mern', 'mean', 'web developer'].some(t => k.includes(t))
-      ),
-      entryLevel: TECH_KEYWORDS.filter(k => 
-        ['fresher', 'intern', 'trainee', 'junior', 'entry level'].some(t => k.includes(t))
-      )
-    }
-  });
-}
-
-async function handleTestPipedream() {
-  try {
-    const axios = (await import('axios')).default;
-    const response = await axios.post(
-      'https://eo3fx7vdzhapezn.m.pipedream.net',
-      {
-        event: 'test',
-        message: 'Testing Pipedream webhook connection',
-        timestamp: new Date().toISOString(),
-        source: 'linkedin-jaipur-scraper',
-        status: 'success'
-      },
-      { timeout: 5000 }
-    );
-    
-    return NextResponse.json({
-      success: true,
-      message: 'Pipedream webhook test successful',
-      status: response.status,
-      pipedreamUrl: 'https://eo3fx7vdzhapezn.m.pipedream.net'
-    });
-    
-  } catch (error) {
-    return NextResponse.json({
-      success: false,
-      error: 'Pipedream webhook test failed',
-      details: error instanceof Error ? error.message : 'Unknown error',
-      pipedreamUrl: 'https://eo3fx7vdzhapezn.m.pipedream.net'
     }, { status: 500 });
   }
 }
