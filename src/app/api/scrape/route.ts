@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from '@/lib/mongodb';
 import ScrapedData from '@/models/ScrapedData';
 import PipedreamScheduler, { TECH_KEYWORDS } from '@/utils/pipedreamScheduler';
-
 import { 
   scrapeLinkedInSearch, 
   batchScrapeJobDetails, 
@@ -56,6 +55,25 @@ function checkTimeout(startTime: number, timeoutMs: number = 250000): boolean {
   return elapsed >= timeoutMs;
 }
 
+// Helper function to check if job exists in database
+async function checkJobExists(url: string, jobId?: string, dataEntityUrn?: string): Promise<boolean> {
+  try {
+    const query: any = { $or: [] };
+    
+    if (url) query.$or.push({ url });
+    if (jobId) query.$or.push({ job_id: jobId });
+    if (dataEntityUrn) query.$or.push({ 'metadata.data_entity_urn': dataEntityUrn });
+    
+    if (query.$or.length === 0) return false;
+    
+    const existingJob = await ScrapedData.findOne(query);
+    return !!existingJob;
+  } catch (error) {
+    console.error('Error checking job existence:', error);
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const MAX_EXECUTION_TIME = 250000; // 4 minutes 10 seconds (leaving buffer)
@@ -83,7 +101,8 @@ export async function POST(request: NextRequest) {
     console.log('🔗 Connecting to database...');
     await dbConnect();
     
-    const { url, category, tags, source, maxJobs = 20 } = body || {};
+    // Parse parameters with default values
+    const { url, category, tags, source, maxJobs = 10, count = 10 } = body || {};
     
     if (!url) {
       return NextResponse.json(
@@ -119,7 +138,7 @@ export async function POST(request: NextRequest) {
         category, 
         tags, 
         source,
-        maxJobs,
+        Math.min(maxJobs, count), // Use the smaller of maxJobs or count
         startTime,
         MAX_EXECUTION_TIME
       );
@@ -149,7 +168,7 @@ async function handleLinkedInSearch(
   category?: string, 
   tags?: string[], 
   source?: string,
-  maxJobs: number = 20,
+  maxJobs: number = 10, // Changed default from 20 to 10
   startTime: number,
   timeoutMs: number = 250000
 ) {
@@ -177,13 +196,35 @@ async function handleLinkedInSearch(
     
     console.log(`📋 Found ${jobListings.length} job listings`);
     
-    // Step 2: Limit jobs based on timeout considerations
-    const safeMaxJobs = Math.min(jobListings.length, maxJobs, 30); // Max 30 jobs for safety
-    const jobsToProcess = jobListings.slice(0, safeMaxJobs);
+    // Step 2: Check for duplicates BEFORE scraping details
+    console.log('🔍 Checking for existing jobs in database...');
+    const uniqueJobListings: LinkedInJobListing[] = [];
+    const duplicateJobs: LinkedInJobListing[] = [];
     
-    console.log(`⚡ Processing ${safeMaxJobs} jobs (timeout-safe)`);
+    for (const listing of jobListings) {
+      const exists = await checkJobExists(
+        listing.job_url, 
+        listing.job_id, 
+        listing.data_entity_urn
+      );
+      
+      if (exists) {
+        duplicateJobs.push(listing);
+        console.log(`⏭️ Skipping existing job (scrape phase): ${listing.job_title}`);
+      } else {
+        uniqueJobListings.push(listing);
+      }
+    }
     
-    // Step 3: Scrape job details with concurrency control
+    console.log(`🆕 Found ${uniqueJobListings.length} new jobs, ${duplicateJobs.length} duplicates`);
+    
+    // Step 3: Limit jobs based on timeout considerations and requested count
+    const safeMaxJobs = Math.min(uniqueJobListings.length, maxJobs, 30); // Max 30 jobs for safety
+    const jobsToProcess = uniqueJobListings.slice(0, safeMaxJobs);
+    
+    console.log(`⚡ Processing ${safeMaxJobs} new jobs (timeout-safe)`);
+    
+    // Step 4: Scrape job details with concurrency control
     const jobDetails = await batchScrapeJobDetails(jobsToProcess, safeMaxJobs);
     
     if (checkTimeout(startTime, timeoutMs)) {
@@ -192,7 +233,7 @@ async function handleLinkedInSearch(
     
     console.log(`✅ Successfully processed ${jobDetails.length} job details`);
     
-    // Step 4: Save to database with batch operations and timeout checks
+    // Step 5: Save to database with batch operations and timeout checks
     const results = await saveJobsWithTimeout(
       jobDetails,
       jobsToProcess,
@@ -205,14 +246,19 @@ async function handleLinkedInSearch(
     
     const { savedJobs, skippedJobs, failedJobs } = results;
     
+    // Include duplicates in skipped count
+    const totalSkipped = skippedJobs.length + duplicateJobs.length;
+    
     // Log results
     console.log('\n📊 SCRAPING SUMMARY:');
     console.log('========================');
     console.log(`Total listings found: ${jobListings.length}`);
-    console.log(`Jobs attempted: ${safeMaxJobs}`);
-    console.log(`Jobs processed: ${jobDetails.length}`);
+    console.log(`New jobs found: ${uniqueJobListings.length}`);
+    console.log(`Duplicate jobs skipped: ${duplicateJobs.length}`);
+    console.log(`Jobs attempted to scrape: ${safeMaxJobs}`);
+    console.log(`Jobs scraped: ${jobDetails.length}`);
     console.log(`Jobs saved: ${savedJobs.length}`);
-    console.log(`Jobs skipped (duplicates): ${skippedJobs.length}`);
+    console.log(`Jobs skipped (during save): ${skippedJobs.length}`);
     console.log(`Jobs failed: ${failedJobs.length}`);
     console.log(`Total execution time: ${Date.now() - startTime}ms`);
     
@@ -222,21 +268,30 @@ async function handleLinkedInSearch(
       message: 'LinkedIn search scraping completed',
       summary: {
         totalListingsFound: jobListings.length,
+        newJobsFound: uniqueJobListings.length,
+        duplicateJobsSkipped: duplicateJobs.length,
         jobsAttempted: safeMaxJobs,
-        jobsProcessed: jobDetails.length,
+        jobsScraped: jobDetails.length,
         jobsSaved: savedJobs.length,
-        jobsSkipped: skippedJobs.length,
+        jobsSkipped: totalSkipped,
         jobsFailed: failedJobs.length,
         timeoutSafe: true,
         executionTime: `${Date.now() - startTime}ms`
       },
       data: {
         savedJobs: savedJobs.slice(0, 5), // Return first 5 for preview
-        skippedJobs: skippedJobs.slice(0, 5),
+        skippedJobs: {
+          scrapePhase: duplicateJobs.slice(0, 5).map(job => ({
+            job_title: job.job_title,
+            url: job.job_url,
+            reason: 'Already exists in database (checked before scraping)'
+          })),
+          savePhase: skippedJobs.slice(0, 5)
+        },
         failedJobs: failedJobs.slice(0, 5),
         statistics: {
           totalSaved: savedJobs.length,
-          totalSkipped: skippedJobs.length,
+          totalSkipped: totalSkipped,
           totalFailed: failedJobs.length
         }
       }
@@ -305,7 +360,7 @@ async function saveJobsWithTimeout(
         // Generate unique job ID
         const jobId = detail.job_id || listing.job_id || `linkedin_${Date.now()}_${jobIndex}`;
         
-        // Check if job already exists
+        // Check if job already exists (double-check)
         const existingJob = await ScrapedData.findOne({ 
           $or: [
             { url: listing.job_url },
@@ -315,7 +370,7 @@ async function saveJobsWithTimeout(
         });
         
         if (existingJob) {
-          console.log(`⏭️ Skipping existing job: ${detail.job_title}`);
+          console.log(`⏭️ Skipping existing job (save phase): ${detail.job_title}`);
           return {
             type: 'skipped' as const,
             data: {
@@ -464,7 +519,7 @@ async function handleSingleJobScrape(
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
   const searchParams = request.nextUrl.searchParams;
-    const action = searchParams.get('action');
+  const action = searchParams.get('action');
   const test = searchParams.get('test');
   
   const scheduler = PipedreamScheduler.getInstance();
@@ -490,6 +545,8 @@ export async function GET(request: NextRequest) {
       
     case 'test-pipedream':
       return await handleTestPipedream();
+  }
+  
   if (test === 'connection') {
     try {
       await dbConnect();
@@ -510,23 +567,31 @@ export async function GET(request: NextRequest) {
   }
   
   return NextResponse.json({
-        success: true,
-        message: 'LinkedIn Scraper API',
-        endpoints: {
-          'GET ?action=start-overnight': 'Start overnight scraping',
-          'GET ?action=status': 'Get scraping status',
-          'GET ?action=stop': 'Stop scraping',
-          'GET ?action=results': 'Get results summary',
-          'GET ?action=queue': 'Get job queue',
-          'GET ?action=keywords': 'Get all keywords',
-          'GET ?action=test-pipedream': 'Test Pipedream webhook',
-          'POST /': 'Scrape single URL (existing)'
-        },
-        pipedreamWebhook: 'https://eo3fx7vdzhapezn.m.pipedream.net'
-      });
+    success: true,
+    message: 'LinkedIn Scraper API',
+    endpoints: {
+      'POST /': 'Scrape LinkedIn jobs with body: {url, count?, maxJobs?, category?, tags?, source?}',
+      'GET ?action=start-overnight': 'Start overnight scraping',
+      'GET ?action=status': 'Get scraping status',
+      'GET ?action=stop': 'Stop scraping',
+      'GET ?action=results': 'Get results summary',
+      'GET ?action=queue': 'Get job queue',
+      'GET ?action=keywords': 'Get all keywords',
+      'GET ?action=test-pipedream': 'Test Pipedream webhook',
+      'GET ?test=connection': 'Test database connection'
+    },
+    default_behavior: 'Scrapes and saves 10 jobs by default',
+    parameters: {
+      url: 'Required: LinkedIn search URL',
+      count: 'Optional: Number of jobs to scrape and save (default: 10, max: 30)',
+      maxJobs: 'Optional: Alias for count',
+      category: 'Optional: Job category',
+      tags: 'Optional: Array of tags',
+      source: 'Optional: Source identifier'
+    },
+    pipedreamWebhook: 'https://eo3fx7vdzhapezn.m.pipedream.net'
+  });
 }
-}
-
 
 async function handleStartOvernight(scheduler: any) {
   try {
@@ -630,6 +695,7 @@ async function handleGetKeywords() {
 
 async function handleTestPipedream() {
   try {
+    const axios = (await import('axios')).default;
     const response = await axios.post(
       'https://eo3fx7vdzhapezn.m.pipedream.net',
       {
