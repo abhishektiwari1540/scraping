@@ -8,6 +8,50 @@ import {
   LinkedInJobListing
 } from '@/utils/scraper';
 
+// CORS headers configuration
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*', // Or your specific frontend URL
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Credentials': 'true',
+};
+
+// Helper function to add CORS headers to responses
+function withCors(response: NextResponse, origin?: string): NextResponse {
+  const headers = new Headers(response.headers);
+  
+  // Set CORS headers
+  headers.set('Access-Control-Allow-Origin', origin || '*');
+  headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  headers.set('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle OPTIONS preflight
+  headers.set('Access-Control-Max-Age', '86400');
+  
+  return new NextResponse(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+// Handle OPTIONS method for CORS preflight
+export async function OPTIONS(request: NextRequest) {
+  const origin = request.headers.get('origin') || '*';
+  
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Max-Age': '86400',
+    },
+  });
+}
+
 // Helper function to retry database operations
 async function retryDbOperation<T>(
   operation: () => Promise<T>,
@@ -88,12 +132,15 @@ export async function POST(request: NextRequest) {
     try {
       body = await request.json();
     } catch (jsonError) {
-      return NextResponse.json(
-        { 
-          success: false,
-          error: 'Invalid JSON in request body'
-        },
-        { status: 400 }
+      return withCors(
+        NextResponse.json(
+          { 
+            success: false,
+            error: 'Invalid JSON in request body'
+          },
+          { status: 400 }
+        ),
+        request.headers.get('origin') || '*'
       );
     }
     
@@ -104,12 +151,15 @@ export async function POST(request: NextRequest) {
     const { url, category, tags, source, maxJobs = 10, count = 10 } = body || {};
     
     if (!url) {
-      return NextResponse.json(
-        { 
-          success: false,
-          error: 'URL is required'
-        },
-        { status: 400 }
+      return withCors(
+        NextResponse.json(
+          { 
+            success: false,
+            error: 'URL is required'
+          },
+          { status: 400 }
+        ),
+        request.headers.get('origin') || '*'
       );
     }
 
@@ -117,12 +167,15 @@ export async function POST(request: NextRequest) {
     try {
       new URL(url);
     } catch (e) {
-      return NextResponse.json(
-        { 
-          success: false,
-          error: 'Invalid URL format'
-        },
-        { status: 400 }
+      return withCors(
+        NextResponse.json(
+          { 
+            success: false,
+            error: 'Invalid URL format'
+          },
+          { status: 400 }
+        ),
+        request.headers.get('origin') || '*'
       );
     }
 
@@ -130,9 +183,11 @@ export async function POST(request: NextRequest) {
     const isLinkedInSearch = url.includes('linkedin.com/jobs/search') || 
                             (url.includes('linkedin.com/jobs/') && url.includes('search?'));
     
+    const origin = request.headers.get('origin') || '*';
+    
     if (isLinkedInSearch) {
       console.log('🔍 Detected LinkedIn search page, starting batch scraping...');
-      return await handleLinkedInSearch(
+      const response = await handleLinkedInSearch(
         url, 
         category, 
         tags, 
@@ -141,22 +196,27 @@ export async function POST(request: NextRequest) {
         startTime,
         MAX_EXECUTION_TIME
       );
+      return withCors(response, origin);
     } else {
       // Single job scraping
-      return await handleSingleJobScrape(url, category, tags, source);
+      const response = await handleSingleJobScrape(url, category, tags, source);
+      return withCors(response, origin);
     }
 
   } catch (error) {
     console.error('🚨 API Error:', error);
     
-    return NextResponse.json(
-      { 
-        success: false,
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : 'Unknown error',
-        executionTime: `${Date.now() - startTime}ms`
-      },
-      { status: 500 }
+    return withCors(
+      NextResponse.json(
+        { 
+          success: false,
+          error: 'Internal server error',
+          details: error instanceof Error ? error.message : 'Unknown error',
+          executionTime: `${Date.now() - startTime}ms`
+        },
+        { status: 500 }
+      ),
+      request.headers.get('origin') || '*'
     );
   }
 }
@@ -170,7 +230,7 @@ async function handleLinkedInSearch(
   maxJobs: number = 10,
   startTime: number,
   timeoutMs: number = 250000
-) {
+): Promise<NextResponse> {
   const operationStartTime = Date.now();
   
   try {
@@ -313,6 +373,47 @@ async function handleLinkedInSearch(
   }
 }
 
+// GET endpoint to fetch scraped data from database
+export async function GET(request: NextRequest) {
+  try {
+    await dbConnect();
+    
+    const searchParams = request.nextUrl.searchParams;
+    const limit = parseInt(searchParams.get('limit') || '100');
+    
+    // Get all jobs from database
+    const jobs = await ScrapedData.find({ is_active: true })
+      .sort({ scraped_at: -1 }) // Newest first
+      .limit(limit)
+      .lean();
+    
+    // Get total count
+    const totalCount = await ScrapedData.countDocuments({ is_active: true });
+    
+    const response = NextResponse.json({
+      success: true,
+      message: 'Data retrieved successfully',
+      count: jobs.length,
+      total: totalCount,
+      data: jobs
+    }, { status: 200 });
+    
+    // Add CORS headers
+    return withCors(response, request.headers.get('origin') || '*');
+    
+  } catch (error) {
+    console.error('🚨 GET API Error:', error);
+    
+    const response = NextResponse.json({
+      success: false,
+      error: 'Failed to fetch data',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
+    
+    return withCors(response, request.headers.get('origin') || '*');
+  }
+}
+
 // Optimized function to save jobs with timeout management
 async function saveJobsWithTimeout(
   jobDetails: any[],
@@ -441,7 +542,7 @@ async function handleSingleJobScrape(
   tags?: string[], 
   source?: string,
   force?: boolean
-) {
+): Promise<NextResponse> {
   const startTime = Date.now();
   
   try {
@@ -498,41 +599,5 @@ async function handleSingleJobScrape(
       },
       { status: 500 }
     );
-  }
-}
-
-// GET endpoint to fetch scraped data from database
-export async function GET(request: NextRequest) {
-  try {
-    await dbConnect();
-    
-    const searchParams = request.nextUrl.searchParams;
-    const limit = parseInt(searchParams.get('limit') || '100');
-    
-    // Get all jobs from database
-    const jobs = await ScrapedData.find({ is_active: true })
-      .sort({ scraped_at: -1 }) // Newest first
-      .limit(limit)
-      .lean();
-    
-    // Get total count
-    const totalCount = await ScrapedData.countDocuments({ is_active: true });
-    
-    return NextResponse.json({
-      success: true,
-      message: 'Data retrieved successfully',
-      count: jobs.length,
-      total: totalCount,
-      data: jobs
-    }, { status: 200 });
-    
-  } catch (error) {
-    console.error('🚨 GET API Error:', error);
-    
-    return NextResponse.json({
-      success: false,
-      error: 'Failed to fetch data',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
   }
 }
