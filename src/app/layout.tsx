@@ -1,5 +1,5 @@
 // src/app/layout.tsx
-import { JaipurJobScheduler } from "@/utils/scheduler"
+import { JaipurJobScheduler } from '@/lib/scheduler';
 export const metadata = {
   title: 'Job Scraper API',
   description: 'API for job scraping',
