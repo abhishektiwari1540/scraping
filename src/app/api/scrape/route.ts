@@ -379,22 +379,71 @@ export async function GET(request: NextRequest) {
     await dbConnect();
     
     const searchParams = request.nextUrl.searchParams;
+    const jobId = searchParams.get('jobId');
+    const url = searchParams.get('url');
     const limit = parseInt(searchParams.get('limit') || '100');
     
-    // Get all jobs from database
+    // If jobId or url is provided, fetch specific job
+    if (jobId || url) {
+      const query: any = {};
+      
+      if (jobId) {
+        query.job_id = jobId;
+      }
+      
+      if (url) {
+        query.url = url;
+      }
+      
+      const job = await ScrapedData.findOne(query).lean();
+      
+      if (!job) {
+        const response = NextResponse.json({
+          success: false,
+          error: 'Job not found',
+          message: jobId ? `Job with ID ${jobId} not found` : `Job with URL ${url} not found`
+        }, { status: 404 });
+        
+        return withCors(response, request.headers.get('origin') || '*');
+      }
+      
+      const response = NextResponse.json({
+        success: true,
+        message: 'Job retrieved successfully',
+        data: job
+      }, { status: 200 });
+      
+      return withCors(response, request.headers.get('origin') || '*');
+    }
+    
+    // Otherwise, get all jobs with pagination
+    const page = parseInt(searchParams.get('page') || '1');
+    const limitParam = Math.min(limit, 200); // Max 200 per request
+    const skip = (page - 1) * limitParam;
+    
+    // Get jobs from database
     const jobs = await ScrapedData.find({ is_active: true })
       .sort({ scraped_at: -1 }) // Newest first
-      .limit(limit)
+      .skip(skip)
+      .limit(limitParam)
       .lean();
     
-    // Get total count
+    // Get total count for pagination
     const totalCount = await ScrapedData.countDocuments({ is_active: true });
+    const totalPages = Math.ceil(totalCount / limitParam);
     
     const response = NextResponse.json({
       success: true,
       message: 'Data retrieved successfully',
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalCount,
+        limit: limitParam,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1
+      },
       count: jobs.length,
-      total: totalCount,
       data: jobs
     }, { status: 200 });
     
