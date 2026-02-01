@@ -1,9 +1,15 @@
 // src/app/layout.tsx
+import { JaipurJobScheduler } from "@/utils/scheduler"
 export const metadata = {
   title: 'Job Scraper API',
   description: 'API for job scraping',
 }
 
+if (typeof window === 'undefined') {
+  // Server-side only
+  const scheduler = new JaipurJobScheduler();
+  
+}
 export default function RootLayout({
   children,
 }: {
